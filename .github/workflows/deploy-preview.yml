@@ -34,7 +34,7 @@ jobs:
 
       - run: npm run build
         env:
-          VITE_BASE_PATH: /rope-tangle/dev/
+          VITE_BASE_PATH: /dev/
           VITE_APP_VERSION: "PR #${{ github.event.pull_request.number }} (run ${{ github.run_number }})"
 
       - name: Upload the built preview
@@ -73,7 +73,7 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            const body = `🪢 **Preview deployed:** https://adrianschmidt.github.io/rope-tangle/dev/ (commit ${context.payload.pull_request.head.sha.slice(0, 7)})`;
+            const body = `🪢 **Preview deployed:** https://rope-tangle.github.io/dev/ (commit ${context.payload.pull_request.head.sha.slice(0, 7)})`;
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
