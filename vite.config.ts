@@ -2,7 +2,7 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 
-const BASE_PATH = process.env.VITE_BASE_PATH ?? "/rope-tangle/";
+const BASE_PATH = process.env.VITE_BASE_PATH ?? "/";
 
 export default defineConfig({
   base: BASE_PATH,
