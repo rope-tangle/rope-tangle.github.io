@@ -14,10 +14,18 @@ describe("generation protocol", () => {
     if (!res.ok) throw new Error(res.error);
     expect(res.snapshot.ropes).toHaveLength(4);
     expect(res.seed).toBeGreaterThanOrEqual(1);
+    expect(res.tries).toBeGreaterThanOrEqual(1);
+    expect(res.ms).toBeGreaterThan(0);
   });
 
   it("answers an impossible request with an error instead of throwing", () => {
     const res = handleRequest({ id: 8, seed: 1, ropes: 3 });
-    expect(res).toMatchObject({ id: 8, ok: false });
+    expect(res).toMatchObject({ id: 8, ok: false, kind: "error" });
+  });
+
+  it("reports progress while it generates", () => {
+    let calls = 0;
+    handleRequest({ id: 9, seed: 1, ropes: 4 }, () => calls++);
+    expect(calls).toBeGreaterThan(100);
   });
 });

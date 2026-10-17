@@ -1,9 +1,12 @@
+import { sanitizeReason } from "../analytics/errors";
+import { track, type GameTrigger, type ReplacedGameData } from "../analytics/umami";
 import { drawScene } from "../render/scene";
 import { fitView, ROPE_COLORS, type View } from "../render/ropes";
 import type { Point } from "../util/point";
 import { mulberry32 } from "../util/rng";
 import { guardBack } from "./back-guard";
-import { BoardSource, type LoadedBoard } from "./board-source";
+import { activeClock } from "./active-clock";
+import { BoardFailure, BoardSource, type LoadedBoard } from "./board-source";
 import { easyBoard } from "./easy";
 import { Session, type Phase } from "./session";
 import { loadSettings, memoryStore, saveSettings, type KeyValueStore } from "./settings";
@@ -52,7 +55,7 @@ function element<T extends HTMLElement>(doc: Document, id: string, type: new () 
   return el;
 }
 
-function storageOf(win: Window): KeyValueStore {
+export function storageOf(win: Window): KeyValueStore {
   try {
     const s = win.localStorage;
     s.getItem("rope-tangle/probe");
@@ -85,7 +88,16 @@ export function startApp(doc: Document, win: Window): void {
   const visitRopes = Number(params.get("ropes"));
   if (testMode && Number.isInteger(visitRopes) && visitRopes >= 4 && visitRopes <= 10) settings.ropes = visitRopes;
 
-  const source = new BoardSource();
+  const source = new BoardSource({
+    onTimeout: (ropes, background) => track("generation-timeout", { ropes, background }),
+    isHidden: () => doc.hidden,
+    onPrefetchFailed: (ropes, reason) => track("prefetch-failed", { ropes, reason }),
+  });
+  const played = activeClock(() => win.performance.now(), () => doc.hidden);
+  doc.addEventListener("visibilitychange", () => {
+    played.visibilityChanged();
+    if (!doc.hidden) source.resume();
+  });
   const dumps: string[] = [];
   const frames = { count: 0, total: 0, last: 0, ticks: 0, tickTotal: 0, draws: 0 };
   const clock = { now: () => win.performance.now() };
@@ -94,6 +106,8 @@ export function startApp(doc: Document, win: Window): void {
   let view: View = { s: 1, ox: 0, oy: 0 };
   let dpr = 1, loadToken = 0, renderMs = 0, budgetMs = 8, winShown = false, dirty = true, movesText = "";
   let activePointer: number | null = null;
+  let gameRopes = 0, gameStartedAt = 0;
+  let replaced: ReplacedGameData = {};
 
   const layout = () => {
     dpr = Math.min(win.devicePixelRatio || 1, 2);
@@ -126,6 +140,8 @@ export function startApp(doc: Document, win: Window): void {
 
   const begin = (b: LoadedBoard) => {
     session = new Session(b.engine);
+    gameRopes = b.ropes;
+    gameStartedAt = played.now();
     colors = shuffledColors(b.seed);
     dumps.push(...b.dumps);
     dumps.splice(0, Math.max(0, dumps.length - MAX_DUMPS));
@@ -135,24 +151,42 @@ export function startApp(doc: Document, win: Window): void {
     updateMoves();
   };
 
-  const load = () => {
-    const token = ++loadToken, ropes = settings.ropes;
+  const load = (trigger: GameTrigger) => {
+    const token = ++loadToken, ropes = settings.ropes, requestedAt = played.now();
+    if (session) {
+      replaced = { replacedSolved: session.won, replacedMoves: session.moves, replacedRopesLeft: session.engine.active().length };
+      if (!session.won) replaced.replacedElapsedMs = Math.round(requestedAt - gameStartedAt);
+    }
     session = null;
     updateMoves();
     showOverlay("Scrambling…");
+    const started = (b: LoadedBoard) => {
+      begin(b);
+      track("new-game-started", {
+        ropes: b.ropes,
+        trigger,
+        generationMs: Math.round(b.generationMs),
+        tries: b.tries,
+        waitMs: Math.round(played.now() - requestedAt),
+        prefetched: b.prefetched,
+        ...replaced,
+      });
+      replaced = {};
+    };
     if (testMode && params.get("board") === "easy") {
-      begin({ engine: easyBoard(), seed: 1, ropes: 2, dumps: [] });
+      started({ engine: easyBoard(), seed: 1, ropes: 2, dumps: [], tries: 1, generationMs: 0, prefetched: false });
       return;
     }
     source.next(ropes).then(
       (b) => {
         if (token !== loadToken) return;
-        begin(b);
+        started(b);
         source.prefetch(ropes);
       },
       (e: unknown) => {
         if (token !== loadToken) return;
-        showOverlay(e instanceof Error ? e.message : "No board", { label: "Try again", action: load });
+        track("new-game-failed", { ropes, trigger, reason: e instanceof BoardFailure ? e.kind : "error", detail: sanitizeReason(e), ...replaced });
+        showOverlay(e instanceof Error ? e.message : "No board", { label: "Try again", action: () => load("retry") });
       },
     );
   };
@@ -182,6 +216,7 @@ export function startApp(doc: Document, win: Window): void {
 
   let toastTimer = 0;
   guardBack(win, canvas, () => {
+    track("back-guard-caught", {});
     toast.textContent = "Go back again to leave";
     toast.hidden = false;
     win.clearTimeout(toastTimer);
@@ -200,9 +235,9 @@ export function startApp(doc: Document, win: Window): void {
   ropesSelect.addEventListener("change", () => {
     settings.ropes = Number(ropesSelect.value);
     saveSettings(store, settings);
-    load();
+    load("rope-count");
   });
-  newButton.addEventListener("click", load);
+  newButton.addEventListener("click", () => load("new"));
   showMoves.checked = settings.showMoves;
   showMoves.addEventListener("change", () => {
     settings.showMoves = showMoves.checked;
@@ -245,7 +280,8 @@ export function startApp(doc: Document, win: Window): void {
       if (s.won && !winShown) {
         winShown = true;
         const n = s.moves;
-        showOverlay(settings.showMoves ? `Solved · ${n} ${n === 1 ? "move" : "moves"}` : "✓", { label: "Next", action: load });
+        track("puzzle-completed", { ropes: gameRopes, moves: n, elapsedMs: Math.round(played.now() - gameStartedAt) });
+        showOverlay(settings.showMoves ? `Solved · ${n} ${n === 1 ? "move" : "moves"}` : "✓", { label: "Next", action: () => load("next") });
       }
     }
     frames.ticks++;
@@ -293,6 +329,6 @@ export function startApp(doc: Document, win: Window): void {
   }
 
   layout();
-  load();
+  load("first-load");
   win.requestAnimationFrame(tick);
 }
