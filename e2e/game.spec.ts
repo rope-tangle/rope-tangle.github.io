@@ -1,5 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 
+declare global {
+  interface Window {
+    sentEvents?: [string, unknown][];
+  }
+}
+
 interface P {
   x: number;
   y: number;
@@ -262,5 +268,156 @@ test.describe("back guard", () => {
     await expect(page.locator("#toast")).toHaveText("Go back again to leave");
     await page.goBack();
     expect(page.url()).toBe("about:blank");
+  });
+});
+
+test.describe("analytics", () => {
+  test.use({ hasTouch: true, serviceWorkers: "block" });
+
+  const named = (page: Page, name: string) => page.evaluate((n) => (window.sentEvents ?? []).filter(([e]) => e === n).map(([, d]) => d), name);
+
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      const events: [string, unknown][] = [];
+      window.sentEvents = events;
+      window.umami = { track: (name, data) => events.push([name, data]) };
+    });
+  });
+
+  test("reports a started game, its solution and the game that replaces it", async ({ page }) => {
+    await page.goto("?test=1&board=easy");
+    await loaded(page);
+    expect(await named(page, "new-game-started")).toEqual([
+      { ropes: 2, trigger: "first-load", generationMs: 0, tries: 1, waitMs: expect.any(Number), prefetched: false },
+    ]);
+    await drag(page, await at(page, 192, 256), await at(page, 64, 0));
+    await expect(page.locator("#overlay")).toContainText("Solved", { timeout: 30_000 });
+    expect(await named(page, "puzzle-completed")).toEqual([{ ropes: 2, moves: 1, elapsedMs: expect.any(Number) }]);
+    await page.locator("#overlay button").click();
+    await loaded(page);
+    const next = (await named(page, "new-game-started"))[1];
+    expect(next).toMatchObject({ trigger: "next", replacedSolved: true, replacedMoves: 1, replacedRopesLeft: 0 });
+    expect(next).not.toHaveProperty("replacedElapsedMs");
+    await page.locator("#new").click();
+    await loaded(page);
+    expect((await named(page, "new-game-started"))[2]).toMatchObject({
+      trigger: "new",
+      replacedSolved: false,
+      replacedMoves: 0,
+      replacedRopesLeft: 2,
+      replacedElapsedMs: expect.any(Number),
+    });
+  });
+
+  test("keeps the replaced game's details when its replacement is itself replaced", async ({ page }) => {
+    await page.goto("?test=1&ropes=4");
+    await loaded(page);
+    await page.locator("#ropes").selectOption("10");
+    await page.locator("#ropes").selectOption("9");
+    await loaded(page);
+    const started = await named(page, "new-game-started");
+    expect(started).toHaveLength(2);
+    expect(started).toMatchObject([
+      { trigger: "first-load" },
+      { trigger: "rope-count", ropes: 9, replacedSolved: false, replacedMoves: 0, replacedRopesLeft: 4, replacedElapsedMs: expect.any(Number) },
+    ]);
+  });
+
+  test("reports a back request caught by the guard", async ({ page }) => {
+    await page.goto("?test=1&board=easy");
+    await loaded(page);
+    await touch(page, await at(page, 96, 128), "touchEnd");
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#toast")).toBeVisible();
+    expect(await named(page, "back-guard-caught")).toEqual([{}]);
+  });
+
+  test("reports a board that could not be generated", async ({ page }) => {
+    await page.route("**/assets/worker-*.js", (route) => route.abort());
+    await page.goto("?test=1&ropes=5");
+    await expect(page.locator("#overlay button")).toHaveText("Try again", { timeout: 15_000 });
+    expect(await named(page, "new-game-failed")).toEqual([{ ropes: 5, trigger: "first-load", reason: "crashed", detail: "The board generator stopped" }]);
+    await page.locator("#overlay button").click();
+    await expect.poll(async () => (await named(page, "new-game-failed")).length).toBe(2);
+    expect((await named(page, "new-game-failed"))[1]).toMatchObject({ trigger: "retry", reason: "crashed" });
+  });
+
+  test("gives up on a board generator that stops answering and reports it", async ({ page }) => {
+    await page.route("**/assets/worker-*.js", (route) => route.fulfill({ contentType: "text/javascript", body: "self.onmessage = () => {};" }));
+    await page.clock.install();
+    await page.goto("?test=1&ropes=6");
+    await expect(page.locator("#overlay")).toContainText("Scrambling");
+    await page.clock.fastForward(30_000);
+    await page.clock.fastForward(30_000);
+    await expect(page.locator("#overlay button")).toHaveText("Try again");
+    expect(await named(page, "generation-timeout")).toEqual([{ ropes: 6, background: false }, { ropes: 6, background: false }]);
+    expect(await named(page, "new-game-failed")).toEqual([{ ropes: 6, trigger: "first-load", reason: "timeout", detail: "The board generator didn't answer" }]);
+  });
+
+  const setHidden = (page: Page, hidden: boolean) =>
+    page.evaluate((h) => {
+      Object.defineProperty(document, "hidden", { configurable: true, get: () => h });
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (h ? "hidden" : "visible") });
+      document.dispatchEvent(new Event("visibilitychange"));
+    }, hidden);
+
+  test("leaves time the page was hidden out of the solve time", async ({ page }) => {
+    await page.clock.install();
+    await page.goto("?test=1&board=easy");
+    await loaded(page);
+    await setHidden(page, true);
+    await page.clock.fastForward(60_000);
+    await setHidden(page, false);
+    await drag(page, await at(page, 192, 256), await at(page, 64, 0));
+    await expect(page.locator("#overlay")).toContainText("Solved", { timeout: 30_000 });
+    const elapsedMs = await page.evaluate(() => {
+      const d = window.sentEvents?.find(([n]) => n === "puzzle-completed")?.[1];
+      return typeof d === "object" && d !== null && "elapsedMs" in d && typeof d.elapsedMs === "number" ? d.elapsedMs : -1;
+    });
+    expect(elapsedMs).toBeGreaterThan(0);
+    expect(elapsedMs).toBeLessThan(30_000);
+  });
+
+  test("does not time out a generator while the page is hidden", async ({ page }) => {
+    await page.route("**/assets/worker-*.js", (route) => route.fulfill({ contentType: "text/javascript", body: "self.onmessage = () => {};" }));
+    await page.clock.install();
+    await page.goto("?test=1&ropes=6");
+    await expect(page.locator("#overlay")).toContainText("Scrambling");
+    await setHidden(page, true);
+    for (const ms of [30_000, 30_000, 15_000]) await page.clock.fastForward(ms);
+    expect(await named(page, "generation-timeout")).toEqual([]);
+    await setHidden(page, false);
+    await page.clock.fastForward(29_000);
+    expect(await named(page, "generation-timeout")).toEqual([]);
+    await page.clock.fastForward(2_000);
+    expect(await named(page, "generation-timeout")).toEqual([{ ropes: 6, background: false }]);
+  });
+
+  test("reports uncaught errors without addresses", async ({ page }) => {
+    await page.goto("?test=1&board=easy");
+    await loaded(page);
+    await page.evaluate(() => setTimeout(() => {
+      throw new Error("boom at https://example.test/x.js");
+    }));
+    await expect.poll(() => named(page, "unhandled-error")).toEqual([{ source: "error", name: "Error", reason: "boom at <url>" }]);
+  });
+});
+
+test.describe("analytics tracker", () => {
+  test("holds events until the tracker script has loaded, then sends them in order", async ({ page }) => {
+    await page.route("**/e2e-tracker.js", async (route) => {
+      await new Promise((r) => setTimeout(r, 1000));
+      await route.fulfill({
+        contentType: "text/javascript",
+        body: "window.sentEvents = []; window.umami = { track: (n, d) => window.sentEvents.push([n, d]) };",
+      });
+    });
+    await page.goto("?test=1&board=easy");
+    await loaded(page);
+    await expect.poll(() => page.evaluate(() => (window.sentEvents ?? []).map(([n]) => n))).toEqual(["new-game-started"]);
+    const script = page.locator('script[src="/e2e-tracker.js"]');
+    await expect(script).toHaveAttribute("data-website-id", "e2e-site");
+    await expect(script).toHaveAttribute("data-performance", "true");
+    await expect(script).toHaveAttribute("data-tag", "e2e-build");
   });
 });

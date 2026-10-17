@@ -35,6 +35,8 @@ jobs:
       - run: npm run build
         env:
           VITE_APP_VERSION: "#${{ github.run_number }}"
+          VITE_UMAMI_WEBSITE_ID: ${{ secrets.UMAMI_WEBSITE_ID }}
+          VITE_UMAMI_SCRIPT_URL: ${{ vars.VITE_UMAMI_SCRIPT_URL }}
 
       - run: cp -R spike dist/spike
 

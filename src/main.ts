@@ -1,4 +1,11 @@
-import { startApp } from "./game/app";
+import { resolveDistinctId } from "./analytics/distinct-id";
+import { initErrorTracking } from "./analytics/errors";
+import { injectTracker, track, trackerConfig } from "./analytics/umami";
+import { startApp, storageOf } from "./game/app";
+
+initErrorTracking(window, (data) => track("unhandled-error", data));
+const trackerSettings = trackerConfig(import.meta.env, resolveDistinctId(window, storageOf(window)));
+if (trackerSettings) injectTracker(document, trackerSettings);
 
 startApp(document, window);
 

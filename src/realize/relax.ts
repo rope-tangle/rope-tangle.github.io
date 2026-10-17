@@ -135,9 +135,10 @@ function tryMove(L: Layout, g: Graph, n: number, x: number, y: number): boolean 
   return ok;
 }
 
-export function relax(L: Layout, iterations: number = RELAX_ITERATIONS, pegs: readonly Peg[] = []): void {
+export function relax(L: Layout, iterations: number = RELAX_ITERATIONS, pegs: readonly Peg[] = [], onStep: () => void = () => undefined): void {
   const g = graphOf(L, pegs);
   for (let it = 0; it < iterations; it++) {
+    onStep();
     let moved = 0;
     for (let n = 0; n < L.nodes.length; n++) {
       const node = L.nodes[n]!;

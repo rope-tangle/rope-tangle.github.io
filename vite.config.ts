@@ -6,6 +6,7 @@ const BASE_PATH = process.env.VITE_BASE_PATH ?? "/";
 
 export default defineConfig({
   base: BASE_PATH,
+  appType: "mpa",
   build: {
     rolldownOptions: {
       input: {

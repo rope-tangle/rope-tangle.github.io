@@ -11,6 +11,7 @@ export const RAMP = 150;
 
 export interface PlaceOptions {
   monitor: Monitor | null;
+  onProgress?: () => void;
 }
 
 interface Anchor {
@@ -96,11 +97,12 @@ export function placeAndInflate(L: Layout, board: Board, holes: number[], opts: 
   for (let i = 1; i <= RAMP; i++) {
     E.contactD = (D * i) / RAMP;
     E.substep(null);
+    opts.onProgress?.();
   }
   E.tensionOn = true;
   E.resampleOn = true;
   E.minDist = Infinity;
-  settle(E, 800, 0.15);
+  settle(E, 800, 0.15, opts.onProgress);
   E.attachMonitor(null);
   return E;
 }

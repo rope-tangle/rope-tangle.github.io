@@ -36,6 +36,8 @@ jobs:
         env:
           VITE_BASE_PATH: /dev/
           VITE_APP_VERSION: "PR #${{ github.event.pull_request.number }} (run ${{ github.run_number }})"
+          VITE_UMAMI_WEBSITE_ID: ${{ secrets.UMAMI_WEBSITE_ID }}
+          VITE_UMAMI_SCRIPT_URL: ${{ vars.VITE_UMAMI_SCRIPT_URL }}
 
       - name: Upload the built preview
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
