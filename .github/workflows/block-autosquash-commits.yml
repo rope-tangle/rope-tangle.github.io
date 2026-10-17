@@ -1,0 +1,39 @@
+name: Block autosquash commits
+
+# main only allows rebase merges, which would replay fixup!/squash!/amend! commits onto it verbatim.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  check-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail on fixup!/squash!/amend! commits
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const commits = await github.paginate(github.rest.pulls.listCommits, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              per_page: 100,
+            });
+
+            const autosquash = /^(fixup|squash|amend)!/;
+            const offenders = commits.filter((c) => autosquash.test(c.commit.message.split('\n', 1)[0]));
+
+            if (offenders.length === 0) {
+              core.info(`No autosquash commits found in ${commits.length} commit(s).`);
+              return;
+            }
+
+            const list = offenders.map((c) => `  ${c.sha.slice(0, 9)} ${c.commit.message.split('\n', 1)[0]}`).join('\n');
+            core.setFailed(
+              `This PR has ${offenders.length} autosquash commit(s) that must be folded in before merge (git rebase -i --autosquash):\n${list}`,
+            );
