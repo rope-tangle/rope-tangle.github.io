@@ -32,6 +32,7 @@ export type Events = {
   "generation-timeout": { ropes: number; background: boolean };
   "prefetch-failed": { ropes: number; reason: BoardFailure["kind"] };
   "puzzle-completed": { ropes: number; moves: number; elapsedMs: number };
+  "game-resumed": { ropes: number; moves: number; ropesLeft: number; elapsedMs: number };
   "back-guard-caught": Record<string, never>;
   "unhandled-error": UnhandledErrorData;
 };

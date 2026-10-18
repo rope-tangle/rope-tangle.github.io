@@ -11,6 +11,7 @@ import { BoardFailure, BoardSource, type LoadedBoard } from "./board-source";
 import { bundledLoader, fillFromBundled } from "./bundled";
 import { easyBoard } from "./easy";
 import { storageKeys } from "./records";
+import { GameSaver, restoreGame } from "./saver";
 import { Session, type Phase } from "./session";
 import { loadSettings, memoryStore, saveSettings, type KeyValueStore } from "./settings";
 import { Stock } from "./stock";
@@ -87,13 +88,15 @@ export function startApp(doc: Document, win: Window): void {
 
   const params = new URLSearchParams(win.location.search);
   const testMode = params.has("test");
+  const easy = testMode && params.get("board") === "easy";
   const store = storageOf(win);
   const settings = loadSettings(store);
   const visitRopes = Number(params.get("ropes"));
   if (testMode && ROPE_COUNTS.includes(visitRopes)) settings.ropes = visitRopes;
 
   const dumps: string[] = [];
-  const stock = new Stock(store, storageKeys(import.meta.env.BASE_URL));
+  const keys = storageKeys(import.meta.env.BASE_URL);
+  const stock = new Stock(store, keys);
   const bundledLoads = fillFromBundled(stock, bundledLoader, settings.ropes);
   const source = new BoardSource({
     stock,
@@ -106,7 +109,9 @@ export function startApp(doc: Document, win: Window): void {
     },
   });
   const played = activeClock(() => win.performance.now(), () => doc.hidden);
+  const saver = new GameSaver(store, keys.game, () => played.now());
   doc.addEventListener("visibilitychange", () => {
+    if (doc.hidden) saver.hidden();
     played.visibilityChanged();
     if (!doc.hidden) source.resume();
   });
@@ -153,6 +158,7 @@ export function startApp(doc: Document, win: Window): void {
     session = new Session(b.engine);
     gameRopes = b.ropes;
     gameStartedAt = played.now();
+    if (!easy) saver.started({ session, ropes: b.ropes, seed: b.seed, startedAt: gameStartedAt });
     colors = shuffledColors(b.seed);
     winShown = false;
     layout();
@@ -166,6 +172,7 @@ export function startApp(doc: Document, win: Window): void {
       replaced = { replacedSolved: session.won, replacedMoves: session.moves, replacedRopesLeft: session.engine.active().length };
       if (!session.won) replaced.replacedElapsedMs = Math.round(requestedAt - gameStartedAt);
     }
+    saver.forget();
     session = null;
     updateMoves();
     showOverlay("Scrambling…");
@@ -183,7 +190,7 @@ export function startApp(doc: Document, win: Window): void {
       });
       replaced = {};
     };
-    if (testMode && params.get("board") === "easy") {
+    if (easy) {
       started({ engine: easyBoard(), seed: 1, ropes: 2, tries: 1, generationMs: 0, prefetched: false, bundled: false });
       return;
     }
@@ -278,6 +285,7 @@ export function startApp(doc: Document, win: Window): void {
     if (s) {
       const moving = s.animating();
       s.step(clock, budgetMs);
+      saver.tick();
       if (moving || dirty) {
         dirty = false;
         const t1 = clock.now();
@@ -339,6 +347,26 @@ export function startApp(doc: Document, win: Window): void {
   }
 
   layout();
-  load("first-load");
+  win.addEventListener("pagehide", () => saver.hidden());
+
+  const saved = easy ? null : saver.load();
+  if (saved) {
+    const { session: resumed, startedAt } = restoreGame(saved, played.now());
+    session = resumed;
+    gameRopes = saved.ropes;
+    gameStartedAt = startedAt;
+    colors = shuffledColors(saved.seed);
+    settings.ropes = saved.ropes;
+    ropesSelect.value = String(saved.ropes);
+    saveSettings(store, settings);
+    saver.started({ session: resumed, ropes: saved.ropes, seed: saved.seed, startedAt });
+    layout();
+    overlay.hidden = true;
+    updateMoves();
+    track("game-resumed", { ropes: saved.ropes, moves: saved.moves, ropesLeft: resumed.engine.active().length, elapsedMs: Math.round(saved.playedMs) });
+    source.fill();
+  } else {
+    load("first-load");
+  }
   win.requestAnimationFrame(tick);
 }
