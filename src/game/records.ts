@@ -134,3 +134,33 @@ export function writeRecord(store: KeyValueStore, key: string, value: unknown): 
     return false;
   }
 }
+
+export interface SavedGame {
+  ropes: number;
+  seed: number;
+  moves: number;
+  playedMs: number;
+  snapshot: EngineSnapshot;
+}
+
+export interface GameJson {
+  v: number;
+  ropes: number;
+  seed: number;
+  moves: number;
+  playedMs: number;
+  snapshot: SnapshotJson;
+}
+
+export function encodeGame(g: SavedGame): GameJson {
+  return { v: RECORD_VERSION, ropes: g.ropes, seed: g.seed, moves: g.moves, playedMs: g.playedMs, snapshot: encodeSnapshot(g.snapshot) };
+}
+
+export function decodeGame(v: unknown): SavedGame | null {
+  if (!isObj(v) || v["v"] !== RECORD_VERSION) return null;
+  const { ropes, seed, moves, playedMs } = v;
+  if (!isInt(ropes) || !isInt(seed) || !isInt(moves) || moves < 0 || !isNum(playedMs) || playedMs < 0) return null;
+  const snapshot = decodeSnapshot(v["snapshot"], ropes);
+  if (!snapshot || snapshot.ropes.every((r) => "cleared" in r)) return null;
+  return { ropes, seed, moves, playedMs, snapshot };
+}
