@@ -88,17 +88,21 @@ export function startApp(doc: Document, win: Window): void {
   const visitRopes = Number(params.get("ropes"));
   if (testMode && Number.isInteger(visitRopes) && visitRopes >= 4 && visitRopes <= 10) settings.ropes = visitRopes;
 
+  const dumps: string[] = [];
   const source = new BoardSource({
     onTimeout: (ropes, background) => track("generation-timeout", { ropes, background }),
     isHidden: () => doc.hidden,
     onPrefetchFailed: (ropes, reason) => track("prefetch-failed", { ropes, reason }),
+    onDumps: (d) => {
+      dumps.push(...d);
+      dumps.splice(0, Math.max(0, dumps.length - MAX_DUMPS));
+    },
   });
   const played = activeClock(() => win.performance.now(), () => doc.hidden);
   doc.addEventListener("visibilitychange", () => {
     played.visibilityChanged();
     if (!doc.hidden) source.resume();
   });
-  const dumps: string[] = [];
   const frames = { count: 0, total: 0, last: 0, ticks: 0, tickTotal: 0, draws: 0 };
   const clock = { now: () => win.performance.now() };
   let session: Session | null = null;
@@ -143,8 +147,6 @@ export function startApp(doc: Document, win: Window): void {
     gameRopes = b.ropes;
     gameStartedAt = played.now();
     colors = shuffledColors(b.seed);
-    dumps.push(...b.dumps);
-    dumps.splice(0, Math.max(0, dumps.length - MAX_DUMPS));
     winShown = false;
     layout();
     overlay.hidden = true;
@@ -174,14 +176,14 @@ export function startApp(doc: Document, win: Window): void {
       replaced = {};
     };
     if (testMode && params.get("board") === "easy") {
-      started({ engine: easyBoard(), seed: 1, ropes: 2, dumps: [], tries: 1, generationMs: 0, prefetched: false });
+      started({ engine: easyBoard(), seed: 1, ropes: 2, tries: 1, generationMs: 0, prefetched: false });
       return;
     }
     source.next(ropes).then(
       (b) => {
         if (token !== loadToken) return;
         started(b);
-        source.prefetch(ropes);
+        source.fill();
       },
       (e: unknown) => {
         if (token !== loadToken) return;
