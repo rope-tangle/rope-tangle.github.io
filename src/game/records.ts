@@ -1,11 +1,10 @@
-import { boardForRopes, PITCH } from "../board";
+import { boardForRopes, PITCH, ROPE_COUNTS } from "../board";
 import { BLOCKER_H } from "../engine/constants";
 import type { EngineSnapshot, RopeSnapshot } from "../engine/snapshot";
 import { GENERATOR_VERSION } from "../generate/version";
 import type { KeyValueStore } from "./settings";
 
 export const RECORD_VERSION = 1;
-export const ROPE_COUNTS: readonly number[] = [4, 5, 6, 7, 8, 9, 10];
 
 export interface StorageKeys {
   game: string;

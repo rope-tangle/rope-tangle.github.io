@@ -1,7 +1,8 @@
+import { ROPE_COUNTS } from "../board";
 import type { Engine } from "../engine/engine";
 import { fromSnapshot } from "../engine/snapshot";
 import type { GenerateFailureKind, GenerateRequest, GeneratorMessage } from "../generate/protocol";
-import { ROPE_COUNTS, storageKeys } from "./records";
+import { storageKeys } from "./records";
 import { memoryStore } from "./settings";
 import { Stock } from "./stock";
 
