@@ -72,6 +72,22 @@ export class Engine {
     return r;
   }
 
+  addClearedRope(): ERope {
+    const r: ERope = {
+      id: this.ropes.length,
+      pts: [],
+      ends: [null, null],
+      cleared: true,
+      s: new Float64Array(0),
+      L: 0,
+      h: H0,
+      maxSeg: 0,
+      zeroN: 0,
+    };
+    this.ropes.push(r);
+    return r;
+  }
+
   straightRope(holeA: number, holeB: number): ERope {
     const A = this.hole(holeA), B = this.hole(holeB);
     const n = Math.max(2, Math.round(Math.hypot(B.x - A.x, B.y - A.y) / H0));
