@@ -4,6 +4,7 @@ import type { KeyValueStore } from "./settings";
 
 export class Stock {
   private readonly boards = new Map<number, ReadyBoard>();
+  private readonly bundled = new Set<number>();
   private readonly store: KeyValueStore;
   private readonly keys: StorageKeys;
 
@@ -13,6 +14,7 @@ export class Stock {
     for (const n of ROPE_COUNTS) {
       const b = readRecord(store, keys.ready(n), (v) => decodeReady(v, n));
       if (b) this.boards.set(n, b);
+      if (readRecord(store, keys.bundled(n), (v) => (v === true ? true : null))) this.bundled.add(n);
     }
   }
 
@@ -20,11 +22,19 @@ export class Stock {
     return this.boards.has(ropes);
   }
 
+  gotBundled(ropes: number): boolean {
+    return this.bundled.has(ropes);
+  }
+
   take(ropes: number): ReadyBoard | null {
     const b = this.boards.get(ropes);
     if (!b) return null;
     this.boards.delete(ropes);
     removeRecord(this.store, this.keys.ready(ropes));
+    if (b.bundled) {
+      this.bundled.add(ropes);
+      writeRecord(this.store, this.keys.bundled(ropes), true);
+    }
     return b;
   }
 

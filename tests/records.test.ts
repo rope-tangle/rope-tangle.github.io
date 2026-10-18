@@ -20,6 +20,8 @@ describe("storage keys", () => {
     expect(storageKeys("/").ready(5)).toBe("rope-tangle/ready/5");
     expect(storageKeys("/dev/").game).toBe("rope-tangle/dev/game");
     expect(storageKeys("/dev/").ready(10)).toBe("rope-tangle/dev/ready/10");
+    expect(storageKeys("/").bundled(5)).toBe("rope-tangle/bundled/5");
+    expect(storageKeys("/dev/").bundled(5)).toBe("rope-tangle/dev/bundled/5");
   });
 });
 

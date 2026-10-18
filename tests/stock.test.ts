@@ -35,6 +35,23 @@ describe("stock", () => {
     expect(store.getItem(keys.ready(6))).toBeNull();
   });
 
+  it("remembers across visits which sizes already got their bundled board", () => {
+    const store = memoryStore(), s = new Stock(store, keys);
+    s.put({ ...ready(4), bundled: true });
+    s.put(ready(5));
+    s.take(4);
+    const again = new Stock(store, keys);
+    expect(again.gotBundled(4)).toBe(true);
+    expect(again.gotBundled(5)).toBe(false);
+  });
+
+  it("marks a bundled board only once it has been dealt", () => {
+    const store = memoryStore(), s = new Stock(store, keys);
+    s.put({ ...ready(6), bundled: true });
+    expect(s.gotBundled(6)).toBe(false);
+    expect(new Stock(store, keys).gotBundled(6)).toBe(false);
+  });
+
   it("keeps boards in memory when storage refuses them", () => {
     const refusing: KeyValueStore = {
       getItem: () => null,

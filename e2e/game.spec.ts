@@ -126,8 +126,30 @@ test.describe("touch", () => {
   });
 });
 
+test.describe("bundled boards", () => {
+  test.use({ serviceWorkers: "block" });
+
+  test("leaves the stock alone when a replaced board's file arrives late", async ({ page }) => {
+    await page.route("**/assets/ready-10-*.js", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      await route.continue();
+    });
+    await page.goto("?test=1&ropes=5");
+    await loaded(page);
+    const late = page.waitForResponse(/\/assets\/ready-10-/);
+    await page.selectOption("#ropes", "10");
+    await page.selectOption("#ropes", "5");
+    await loaded(page);
+    await late;
+    await page.waitForTimeout(300);
+    expect(await page.evaluate(() => localStorage.getItem("rope-tangle/ready/10") !== null)).toBe(true);
+    expect((await state(page)).active).toBe(5);
+  });
+});
+
 test.describe("failures", () => {
   test("offers another try when the board generator cannot start", async ({ page }) => {
+    await page.route("**/assets/ready-*.js", (route) => route.abort());
     await page.route("**/assets/worker-*.js", (route) => route.abort());
     await page.goto("?test=1");
     await expect(page.locator("#overlay button")).toHaveText("Try again", { timeout: 15_000 });
@@ -135,6 +157,26 @@ test.describe("failures", () => {
 });
 
 test.describe("offline", () => {
+  test("caches the board generator even when it finishes loading late", async ({ page }) => {
+    await page.route("**/assets/worker-*.js", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      await route.continue();
+    });
+    await page.goto("?test=1");
+    await loaded(page);
+    await expect
+      .poll(
+        () =>
+          page.evaluate(async () => {
+            const urls: string[] = [];
+            for (const k of await caches.keys()) for (const r of await (await caches.open(k)).keys()) urls.push(r.url);
+            return urls.some((u) => u.includes("/assets/worker-"));
+          }),
+        { timeout: 15_000 },
+      )
+      .toBe(true);
+  });
+
   test("plays offline after one visit", async ({ page, context }) => {
     await page.goto("?test=1");
     await loaded(page);
@@ -288,7 +330,7 @@ test.describe("analytics", () => {
     await page.goto("?test=1&board=easy");
     await loaded(page);
     expect(await named(page, "new-game-started")).toEqual([
-      { ropes: 2, trigger: "first-load", generationMs: 0, tries: 1, waitMs: expect.any(Number), prefetched: false },
+      { ropes: 2, trigger: "first-load", generationMs: 0, tries: 1, waitMs: expect.any(Number), prefetched: false, bundled: false },
     ]);
     await drag(page, await at(page, 192, 256), await at(page, 64, 0));
     await expect(page.locator("#overlay")).toContainText("Solved", { timeout: 30_000 });
@@ -309,16 +351,26 @@ test.describe("analytics", () => {
     });
   });
 
+  test("starts a first visit with a bundled board for any rope count", async ({ page }) => {
+    await page.goto("?test=1&ropes=10");
+    await loaded(page);
+    expect((await named(page, "new-game-started"))[0]).toMatchObject({ ropes: 10, trigger: "first-load", prefetched: true, bundled: true });
+    await page.locator("#ropes").selectOption("7");
+    await loaded(page);
+    expect((await named(page, "new-game-started"))[1]).toMatchObject({ ropes: 7, prefetched: true, bundled: true });
+  });
+
   test("starts a second visit with a stocked board", async ({ page }) => {
     await page.goto("?test=1&ropes=4");
     await loaded(page);
     await expect.poll(() => page.evaluate(() => localStorage.getItem("rope-tangle/ready/4") !== null), { timeout: 60_000 }).toBe(true);
     await page.reload();
     await loaded(page);
-    expect((await named(page, "new-game-started"))[0]).toMatchObject({ ropes: 4, trigger: "first-load", prefetched: true });
+    expect((await named(page, "new-game-started"))[0]).toMatchObject({ ropes: 4, trigger: "first-load", prefetched: true, bundled: false });
   });
 
   test("keeps the replaced game's details when its replacement is itself replaced", async ({ page }) => {
+    await page.route("**/assets/ready-*.js", (route) => route.abort());
     await page.goto("?test=1&ropes=4");
     await loaded(page);
     await page.locator("#ropes").selectOption("10");
@@ -342,6 +394,7 @@ test.describe("analytics", () => {
   });
 
   test("reports a board that could not be generated", async ({ page }) => {
+    await page.route("**/assets/ready-*.js", (route) => route.abort());
     await page.route("**/assets/worker-*.js", (route) => route.abort());
     await page.goto("?test=1&ropes=5");
     await expect(page.locator("#overlay button")).toHaveText("Try again", { timeout: 15_000 });
@@ -352,6 +405,7 @@ test.describe("analytics", () => {
   });
 
   test("gives up on a board generator that stops answering and reports it", async ({ page }) => {
+    await page.route("**/assets/ready-*.js", (route) => route.abort());
     await page.route("**/assets/worker-*.js", (route) => route.fulfill({ contentType: "text/javascript", body: "self.onmessage = () => {};" }));
     await page.clock.install();
     await page.goto("?test=1&ropes=6");
@@ -388,6 +442,7 @@ test.describe("analytics", () => {
   });
 
   test("does not time out a generator while the page is hidden", async ({ page }) => {
+    await page.route("**/assets/ready-*.js", (route) => route.abort());
     await page.route("**/assets/worker-*.js", (route) => route.fulfill({ contentType: "text/javascript", body: "self.onmessage = () => {};" }));
     await page.clock.install();
     await page.goto("?test=1&ropes=6");

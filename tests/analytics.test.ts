@@ -100,7 +100,7 @@ describe("track", () => {
     let umami: typeof r.umami | undefined;
     const t = createTracker(() => umami);
     t.wait();
-    t.track("new-game-started", { ropes: 4, trigger: "first-load", generationMs: 900, tries: 1, waitMs: 950, prefetched: false });
+    t.track("new-game-started", { ropes: 4, trigger: "first-load", generationMs: 900, tries: 1, waitMs: 950, prefetched: false, bundled: false });
     t.track("back-guard-caught", {});
     umami = r.umami;
     t.flush();
