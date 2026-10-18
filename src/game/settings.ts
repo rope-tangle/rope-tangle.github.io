@@ -1,3 +1,5 @@
+import { ROPE_COUNTS } from "../board";
+
 export interface Settings {
   ropes: number;
   showMoves: boolean;
@@ -35,7 +37,7 @@ export function loadSettings(store: KeyValueStore): Settings {
   }
   if (typeof v !== "object" || v === null) return { ...DEFAULT_SETTINGS };
   const ropes =
-    "ropes" in v && typeof v.ropes === "number" && Number.isInteger(v.ropes) && v.ropes >= 4 && v.ropes <= 10
+    "ropes" in v && typeof v.ropes === "number" && ROPE_COUNTS.includes(v.ropes)
       ? v.ropes
       : DEFAULT_SETTINGS.ropes;
   const showMoves = "showMoves" in v && typeof v.showMoves === "boolean" ? v.showMoves : DEFAULT_SETTINGS.showMoves;

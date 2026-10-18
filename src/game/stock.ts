@@ -1,4 +1,5 @@
-import { decodeReady, encodeReady, readRecord, removeRecord, ROPE_COUNTS, writeRecord, type ReadyBoard, type StorageKeys } from "./records";
+import { ROPE_COUNTS } from "../board";
+import { decodeReady, encodeReady, readRecord, removeRecord, writeRecord, type ReadyBoard, type StorageKeys } from "./records";
 import type { KeyValueStore } from "./settings";
 
 export class Stock {
