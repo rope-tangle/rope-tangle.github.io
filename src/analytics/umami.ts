@@ -23,6 +23,7 @@ export type NewGameStartedData = ReplacedGameData & {
   tries: number;
   waitMs: number;
   prefetched: boolean;
+  bundled: boolean;
 };
 
 export type Events = {

@@ -9,11 +9,12 @@ export const RECORD_VERSION = 1;
 export interface StorageKeys {
   game: string;
   ready(ropes: number): string;
+  bundled(ropes: number): string;
 }
 
 export function storageKeys(base: string): StorageKeys {
   const prefix = `rope-tangle${base}`;
-  return { game: `${prefix}game`, ready: (ropes) => `${prefix}ready/${ropes}` };
+  return { game: `${prefix}game`, ready: (ropes) => `${prefix}ready/${ropes}`, bundled: (ropes) => `${prefix}bundled/${ropes}` };
 }
 
 export interface ReadyBoard {
