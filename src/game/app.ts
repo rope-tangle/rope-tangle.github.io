@@ -180,7 +180,7 @@ export function startApp(doc: Document, win: Window): void {
       replaced = {};
     };
     if (testMode && params.get("board") === "easy") {
-      started({ engine: easyBoard(), seed: 1, ropes: 2, tries: 1, generationMs: 0, prefetched: false });
+      started({ engine: easyBoard(), seed: 1, ropes: 2, tries: 1, generationMs: 0, prefetched: false, bundled: false });
       return;
     }
     source.next(ropes).then(

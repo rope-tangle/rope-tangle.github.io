@@ -21,6 +21,7 @@ export interface ReadyBoard {
   seed: number;
   generationMs: number;
   tries: number;
+  bundled: boolean;
   snapshot: EngineSnapshot;
 }
 
@@ -39,6 +40,7 @@ export interface ReadyJson {
   seed: number;
   generationMs: number;
   tries: number;
+  bundled: boolean;
   snapshot: SnapshotJson;
 }
 
@@ -86,7 +88,7 @@ export function decodeSnapshot(v: unknown, ropes: number): EngineSnapshot | null
 }
 
 export function encodeReady(b: ReadyBoard): ReadyJson {
-  return { v: RECORD_VERSION, generator: GENERATOR_VERSION, ropes: b.ropes, seed: b.seed, generationMs: b.generationMs, tries: b.tries, snapshot: encodeSnapshot(b.snapshot) };
+  return { v: RECORD_VERSION, generator: GENERATOR_VERSION, ropes: b.ropes, seed: b.seed, generationMs: b.generationMs, tries: b.tries, bundled: b.bundled, snapshot: encodeSnapshot(b.snapshot) };
 }
 
 export function decodeReady(v: unknown, ropes: number): ReadyBoard | null {
@@ -94,7 +96,7 @@ export function decodeReady(v: unknown, ropes: number): ReadyBoard | null {
   const { seed, generationMs, tries } = v;
   if (!isInt(seed) || !isNum(generationMs) || !isInt(tries)) return null;
   const snapshot = decodeSnapshot(v["snapshot"], ropes);
-  return snapshot ? { ropes, seed, generationMs, tries, snapshot } : null;
+  return snapshot ? { ropes, seed, generationMs, tries, bundled: v["bundled"] === true, snapshot } : null;
 }
 
 export function removeRecord(store: KeyValueStore, key: string): void {

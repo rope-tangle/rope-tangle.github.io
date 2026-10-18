@@ -252,12 +252,12 @@ describe("board source", () => {
     await vi.advanceTimersByTimeAsync(4_000);
     expect(workers[0]!.requests.map((r) => r.ropes)).toEqual([8]);
     await vi.advanceTimersByTimeAsync(1_020);
-    await expect(board).resolves.toMatchObject({ ropes: 8, prefetched: false });
+    await expect(board).resolves.toMatchObject({ ropes: 8, prefetched: false, bundled: false });
     expect(workers).toHaveLength(1);
     expect(workers[0]!.requests.map((r) => r.ropes)).toEqual([8, 8]);
   });
 
-  const stocked = (ropes: number) => ({ ropes, seed: ropes, generationMs: 1, tries: 1, snapshot: toSnapshot(easyBoard()) });
+  const stocked = (ropes: number) => ({ ropes, seed: ropes, generationMs: 1, tries: 1, bundled: ropes === 4, snapshot: toSnapshot(easyBoard()) });
 
   it("orders filling by distance from the current size, smaller first", () => {
     expect(fillOrder(8, [4, 5, 6, 7, 8, 9, 10])).toEqual([8, 7, 9, 6, 10, 5, 4]);
@@ -267,11 +267,17 @@ describe("board source", () => {
   it("hands out a stocked board at once and refills that size first", async () => {
     const { s, workers, stock } = source({ ms: 1_000 });
     for (const n of [4, 5, 6]) stock.put(stocked(n));
-    await expect(s.next(5)).resolves.toMatchObject({ ropes: 5, seed: 5, prefetched: true });
+    await expect(s.next(5)).resolves.toMatchObject({ ropes: 5, seed: 5, prefetched: true, bundled: false });
     s.fill();
     await vi.advanceTimersByTimeAsync(1_020);
     expect(workers[0]!.requests.map((r) => r.ropes)).toEqual([5, 7]);
     expect(stock.has(5)).toBe(true);
+  });
+
+  it("says whether a stocked board was a bundled one", async () => {
+    const { s, stock } = source({});
+    stock.put(stocked(4));
+    await expect(s.next(4)).resolves.toMatchObject({ ropes: 4, prefetched: true, bundled: true });
   });
 
   it("stocks a board the player stopped waiting for", async () => {

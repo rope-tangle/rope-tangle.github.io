@@ -6,7 +6,7 @@ import { memoryStore, type KeyValueStore } from "../src/game/settings";
 import { Stock } from "../src/game/stock";
 
 const keys = storageKeys("/");
-const ready = (ropes: number, seed = 1): ReadyBoard => ({ ropes, seed, generationMs: 5, tries: 1, snapshot: toSnapshot(generateBoard(seed, ropes).engine) });
+const ready = (ropes: number, seed = 1): ReadyBoard => ({ ropes, seed, generationMs: 5, tries: 1, bundled: false, snapshot: toSnapshot(generateBoard(seed, ropes).engine) });
 
 describe("stock", () => {
   it("hands each stored board out once", () => {
