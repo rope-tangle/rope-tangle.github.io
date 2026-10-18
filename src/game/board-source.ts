@@ -13,6 +13,7 @@ export interface LoadedBoard {
   tries: number;
   generationMs: number;
   prefetched: boolean;
+  bundled: boolean;
 }
 
 export function fillOrder(current: number, sizes: readonly number[]): number[] {
@@ -107,7 +108,7 @@ export class BoardSource {
     if (ready) {
       if (this.job && this.pending.has(this.job.id)) this.job.claimed = false;
       this.pump();
-      return Promise.resolve({ engine: fromSnapshot(ready.snapshot), seed: ready.seed, ropes, tries: ready.tries, generationMs: ready.generationMs, prefetched: true });
+      return Promise.resolve({ engine: fromSnapshot(ready.snapshot), seed: ready.seed, ropes, tries: ready.tries, generationMs: ready.generationMs, prefetched: true, bundled: ready.bundled });
     }
     return this.obtain(ropes).catch((e: unknown) => {
       if (e instanceof BoardFailure && e.kind === "timeout" && this.current === ropes) return this.obtain(ropes);
@@ -194,8 +195,8 @@ export class BoardSource {
       const j = this.job, unclaimed = j !== null && j.id === m.id && !j.claimed;
       if (m.ok) {
         this.onDumps(m.dumps);
-        if (unclaimed) this.stock.put({ ropes: p.ropes, seed: m.seed, generationMs: m.ms, tries: m.tries, snapshot: m.snapshot });
-        p.resolve({ engine: fromSnapshot(m.snapshot), seed: m.seed, ropes: p.ropes, tries: m.tries, generationMs: m.ms, prefetched: false });
+        if (unclaimed) this.stock.put({ ropes: p.ropes, seed: m.seed, generationMs: m.ms, tries: m.tries, bundled: false, snapshot: m.snapshot });
+        p.resolve({ engine: fromSnapshot(m.snapshot), seed: m.seed, ropes: p.ropes, tries: m.tries, generationMs: m.ms, prefetched: false, bundled: false });
       } else {
         if (unclaimed) this.onPrefetchFailed(p.ropes, m.kind);
         p.reject(new BoardFailure(m.kind, m.error));

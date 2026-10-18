@@ -7,7 +7,7 @@ import {
 } from "../src/game/records";
 import { memoryStore, type KeyValueStore } from "../src/game/settings";
 
-const board4 = (): ReadyBoard => ({ ropes: 4, seed: 7, generationMs: 120, tries: 1, snapshot: toSnapshot(generateBoard(7, 4).engine) });
+const board4 = (): ReadyBoard => ({ ropes: 4, seed: 7, generationMs: 120, tries: 1, bundled: false, snapshot: toSnapshot(generateBoard(7, 4).engine) });
 const roundTrip = (v: unknown): unknown => JSON.parse(JSON.stringify(v));
 const rope = (r: RopeJson | undefined) => {
   if (!r || "cleared" in r) throw new Error("expected a rope on the board");
@@ -26,6 +26,11 @@ describe("storage keys", () => {
 describe("ready records", () => {
   it("round-trip through JSON exactly", () => {
     const b = board4();
+    expect(decodeReady(roundTrip(encodeReady(b)), 4)).toEqual(b);
+  });
+
+  it("keep whether the board was bundled", () => {
+    const b = { ...board4(), bundled: true };
     expect(decodeReady(roundTrip(encodeReady(b)), 4)).toEqual(b);
   });
 
