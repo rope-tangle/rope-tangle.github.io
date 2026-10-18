@@ -320,15 +320,22 @@ describe("board source", () => {
     expect(stock.has(5)).toBe(true);
   });
 
-  it("fills every missing size once and then rests", async () => {
-    const { s, workers, stock } = source({ ms: 100 });
-    s.fill();
-    await vi.advanceTimersByTimeAsync(7 * 120);
-    expect(workers[0]!.requests.map((r) => r.ropes)).toEqual([5, 4, 6, 7, 8, 9, 10]);
-    for (const n of [4, 5, 6, 7, 8, 9, 10]) expect(stock.has(n)).toBe(true);
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(workers[0]!.requests).toHaveLength(7);
+  it("refills the size it is told is current first", async () => {
+    const { s, workers } = source({ ms: 100 });
+    s.fill(10);
+    await vi.advanceTimersByTimeAsync(3 * 120);
+    expect(workers[0]!.requests.map((r) => r.ropes).slice(0, 3)).toEqual([10, 9, 8]);
   });
+
+  it("fills every missing size once and then rests", async () => {
+  const { s, workers, stock } = source({ ms: 100 });
+  s.fill();
+  await vi.advanceTimersByTimeAsync(7 * 120);
+  expect(workers[0]!.requests.map((r) => r.ropes)).toEqual([5, 4, 6, 7, 8, 9, 10]);
+  for (const n of [4, 5, 6, 7, 8, 9, 10]) expect(stock.has(n)).toBe(true);
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(workers[0]!.requests).toHaveLength(7);
+});
 
   it("gives a background board someone is waiting for to them and not to the stock", async () => {
     const { s, stock } = source({ ms: 1_000 });
