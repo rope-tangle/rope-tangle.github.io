@@ -320,6 +320,13 @@ describe("board source", () => {
     expect(stock.has(5)).toBe(true);
   });
 
+  it("refills the size it is told is current first", async () => {
+    const { s, workers } = source({ ms: 100 });
+    s.fill(10);
+    await vi.advanceTimersByTimeAsync(3 * 120);
+    expect(workers[0]!.requests.map((r) => r.ropes).slice(0, 3)).toEqual([10, 9, 8]);
+  });
+
   it("fills every missing size once and then rests", async () => {
     const { s, workers, stock } = source({ ms: 100 });
     s.fill();

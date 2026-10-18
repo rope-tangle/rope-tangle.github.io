@@ -5,6 +5,7 @@ import { GENERATOR_VERSION } from "../generate/version";
 import type { KeyValueStore } from "./settings";
 
 export const RECORD_VERSION = 1;
+export const GAME_VERSION = 1;
 
 export interface StorageKeys {
   game: string;
@@ -108,7 +109,15 @@ export function removeRecord(store: KeyValueStore, key: string): void {
   }
 }
 
-export function readRecord<T>(store: KeyValueStore, key: string, decode: (v: unknown) => T | null): T | null {
+export type DiscardReason = "unreadable" | "version" | "invalid";
+
+export function readRecord<T>(
+  store: KeyValueStore,
+  key: string,
+  decode: (v: unknown) => T | null,
+  onDiscard: (reason: DiscardReason) => void = () => undefined,
+  version = RECORD_VERSION,
+): T | null {
   let raw: string | null;
   try {
     raw = store.getItem(key);
@@ -116,13 +125,24 @@ export function readRecord<T>(store: KeyValueStore, key: string, decode: (v: unk
     return null;
   }
   if (raw === null) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    removeRecord(store, key);
+    onDiscard("unreadable");
+    return null;
+  }
   let value: T | null;
   try {
-    value = decode(JSON.parse(raw));
+    value = decode(parsed);
   } catch {
     value = null;
   }
-  if (value === null) removeRecord(store, key);
+  if (value === null) {
+    removeRecord(store, key);
+    onDiscard(isObj(parsed) && parsed["v"] !== version ? "version" : "invalid");
+  }
   return value;
 }
 
@@ -153,11 +173,11 @@ export interface GameJson {
 }
 
 export function encodeGame(g: SavedGame): GameJson {
-  return { v: RECORD_VERSION, ropes: g.ropes, seed: g.seed, moves: g.moves, playedMs: g.playedMs, snapshot: encodeSnapshot(g.snapshot) };
+  return { v: GAME_VERSION, ropes: g.ropes, seed: g.seed, moves: g.moves, playedMs: g.playedMs, snapshot: encodeSnapshot(g.snapshot) };
 }
 
 export function decodeGame(v: unknown): SavedGame | null {
-  if (!isObj(v) || v["v"] !== RECORD_VERSION) return null;
+  if (!isObj(v) || v["v"] !== GAME_VERSION) return null;
   const { ropes, seed, moves, playedMs } = v;
   if (!isInt(ropes) || !isInt(seed) || !isInt(moves) || moves < 0 || !isNum(playedMs) || playedMs < 0) return null;
   const snapshot = decodeSnapshot(v["snapshot"], ropes);
