@@ -6,6 +6,7 @@ export interface Settings {
 export interface KeyValueStore {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
+  removeItem(key: string): void;
 }
 
 export const SETTINGS_KEY = "rope-tangle/settings";
@@ -17,6 +18,9 @@ export function memoryStore(): KeyValueStore {
     getItem: (k) => m.get(k) ?? null,
     setItem: (k, v) => {
       m.set(k, v);
+    },
+    removeItem: (k) => {
+      m.delete(k);
     },
   };
 }
