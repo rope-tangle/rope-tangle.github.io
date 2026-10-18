@@ -1,7 +1,7 @@
 import type { RopeSnapshot } from "../src/engine/snapshot";
 import { easyBoard } from "../src/game/easy";
 import { generateBoard } from "../src/generate/generate";
-import { decodeGame, encodeGame, storageKeys } from "../src/game/records";
+import { decodeGame, encodeGame, GAME_VERSION, storageKeys } from "../src/game/records";
 import { GameSaver, restoreGame } from "../src/game/saver";
 import { Session } from "../src/game/session";
 import { memoryStore, type KeyValueStore } from "../src/game/settings";
@@ -82,6 +82,25 @@ describe("game saver", () => {
     expect(saved()).toMatchObject({ playedMs: 600 });
   });
 
+  it("says why it dropped a saved game it could not resume", () => {
+    const store = memoryStore(), reasons: string[] = [];
+    store.setItem(KEY, "{not json");
+    const saver = new GameSaver(store, KEY, () => 0);
+    expect(saver.load((reason) => reasons.push(reason))).toBeNull();
+    expect(reasons).toEqual(["unreadable"]);
+  });
+
+  it("versions saved games separately from ready boards", () => {
+    const { store, saved } = setup();
+    const raw = store.getItem(KEY)!;
+    expect(JSON.parse(raw)).toMatchObject({ v: GAME_VERSION });
+    expect(saved()).not.toBeNull();
+    store.setItem(KEY, raw.replace(`"v":${GAME_VERSION}`, `"v":${GAME_VERSION + 1}`));
+    const reasons: string[] = [];
+    expect(new GameSaver(store, KEY, () => 0).load((reason) => reasons.push(reason))).toBeNull();
+    expect(reasons).toEqual(["version"]);
+  });
+
   it("carries on unsaved when storage refuses", () => {
     const refusing: KeyValueStore = {
       getItem: () => null,
@@ -92,6 +111,33 @@ describe("game saver", () => {
     };
     const saver = new GameSaver(refusing, KEY, () => 0);
     expect(() => saver.started({ session: new Session(generateBoard(9, 4).engine), ropes: 4, seed: 9, startedAt: 0 })).not.toThrow();
+  });
+});
+
+describe("resuming a saved game", () => {
+  it("leaves the save in storage untouched when resuming", () => {
+    const { store, session } = setup();
+    const before = store.getItem(KEY);
+    const resumer = new GameSaver(store, KEY, () => 2_000);
+    resumer.resumed({ session, ropes: 4, seed: 9, startedAt: 400 });
+    resumer.tick();
+    expect(store.getItem(KEY)).toBe(before);
+    resumer.hidden();
+    expect(resumer.load()).toMatchObject({ ropes: 4, seed: 9, playedMs: 1_600 });
+  });
+
+  it("saves a resumed game again once a move has come to rest", () => {
+    const store = memoryStore(), saver = new GameSaver(store, KEY, () => 0);
+    const session = new Session(generateBoard(9, 4).engine);
+    saver.resumed({ session, ropes: 4, seed: 9, startedAt: 0 });
+    const r = session.engine.active()[0]!;
+    const free = session.engine.board.holes.findIndex((_, i) => !session.engine.occupied().has(i));
+    session.grab(session.engine.hole(r.ends[1]!));
+    session.drag(session.engine.hole(free));
+    session.release();
+    saver.tick();
+    runUntilIdle(session, saver);
+    expect(saver.load()).toMatchObject({ moves: 1 });
   });
 });
 

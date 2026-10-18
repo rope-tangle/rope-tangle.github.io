@@ -125,6 +125,19 @@ describe("record storage", () => {
     expect(store.getItem("k")).toBeNull();
   });
 
+  it("says why it deleted a record", () => {
+    const store = memoryStore(), reasons: string[] = [];
+    const read = () => readRecord(store, "k", (v) => decodeReady(v, 4), (reason) => reasons.push(reason));
+    store.setItem("k", "{not json");
+    read();
+    store.setItem("k", JSON.stringify({ ...encodeReady(board4()), v: 2 }));
+    read();
+    store.setItem("k", JSON.stringify({ ...encodeReady(board4()), ropes: 5 }));
+    read();
+    read();
+    expect(reasons).toEqual(["unreadable", "version", "invalid"]);
+  });
+
   it("reads back what it wrote", () => {
     const store = memoryStore(), b = board4();
     expect(writeRecord(store, "k", encodeReady(b))).toBe(true);

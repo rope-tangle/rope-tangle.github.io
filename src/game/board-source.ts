@@ -116,7 +116,8 @@ export class BoardSource {
     });
   }
 
-  fill(): void {
+  fill(current?: number): void {
+    if (current !== undefined) this.current = current;
     this.filling = true;
     this.pump();
   }
