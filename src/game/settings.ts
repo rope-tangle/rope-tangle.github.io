@@ -1,3 +1,5 @@
+import { ROPE_COUNTS } from "../board";
+
 export interface Settings {
   ropes: number;
   showMoves: boolean;
@@ -6,6 +8,7 @@ export interface Settings {
 export interface KeyValueStore {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
+  removeItem(key: string): void;
 }
 
 export const SETTINGS_KEY = "rope-tangle/settings";
@@ -17,6 +20,9 @@ export function memoryStore(): KeyValueStore {
     getItem: (k) => m.get(k) ?? null,
     setItem: (k, v) => {
       m.set(k, v);
+    },
+    removeItem: (k) => {
+      m.delete(k);
     },
   };
 }
@@ -31,7 +37,7 @@ export function loadSettings(store: KeyValueStore): Settings {
   }
   if (typeof v !== "object" || v === null) return { ...DEFAULT_SETTINGS };
   const ropes =
-    "ropes" in v && typeof v.ropes === "number" && Number.isInteger(v.ropes) && v.ropes >= 4 && v.ropes <= 10
+    "ropes" in v && typeof v.ropes === "number" && ROPE_COUNTS.includes(v.ropes)
       ? v.ropes
       : DEFAULT_SETTINGS.ropes;
   const showMoves = "showMoves" in v && typeof v.showMoves === "boolean" ? v.showMoves : DEFAULT_SETTINGS.showMoves;

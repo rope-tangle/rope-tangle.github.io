@@ -1,6 +1,9 @@
 import { toSnapshot } from "../src/engine/snapshot";
 import { easyBoard } from "../src/game/easy";
-import { BoardFailure, BoardSource, GENERATOR_TIMEOUT_MS, type GeneratorWorker } from "../src/game/board-source";
+import { BoardFailure, BoardSource, fillOrder, GENERATOR_TIMEOUT_MS, type GeneratorWorker } from "../src/game/board-source";
+import { storageKeys } from "../src/game/records";
+import { memoryStore } from "../src/game/settings";
+import { Stock } from "../src/game/stock";
 import type { GenerateRequest, GeneratorMessage } from "../src/generate/protocol";
 
 interface Behavior {
@@ -10,6 +13,7 @@ interface Behavior {
   fail?: { error: string; kind: "no-board" | "error" };
   failCount?: number;
   crash?: boolean;
+  dumps?: string[];
 }
 
 class FakeWorker implements GeneratorWorker {
@@ -62,7 +66,7 @@ class FakeWorker implements GeneratorWorker {
       this.emit(
         fail
           ? { id: req.id, ok: false, ...fail }
-          : { id: req.id, ok: true, seed: req.ropes * 100, snapshot: toSnapshot(easyBoard()), dumps: [], tries: 1, ms },
+          : { id: req.id, ok: true, seed: req.ropes * 100, snapshot: toSnapshot(easyBoard()), dumps: this.behavior.dumps ?? [], tries: 1, ms },
       );
       this.queue.shift();
       this.busy = false;
@@ -73,7 +77,9 @@ class FakeWorker implements GeneratorWorker {
 
 function source(...behaviors: Behavior[]) {
   const workers: FakeWorker[] = [], timeouts: number[] = [], background: boolean[] = [];
+  const stock = new Stock(memoryStore(), storageKeys("/"));
   const s = new BoardSource({
+    stock,
     spawn: () => {
       const w = new FakeWorker(behaviors[Math.min(workers.length, behaviors.length - 1)] ?? {});
       workers.push(w);
@@ -84,7 +90,7 @@ function source(...behaviors: Behavior[]) {
       background.push(unseen);
     },
   });
-  return { s, workers, timeouts, background };
+  return { s, workers, timeouts, background, stock };
 }
 
 const failure = (kind: BoardFailure["kind"]) => expect.objectContaining({ kind });
@@ -123,13 +129,14 @@ describe("board source", () => {
 
   it("drops unfinished work for another rope count instead of queueing behind it", async () => {
     const { s, workers, timeouts } = source({ ms: 12_000, progressEvery: 1_000 });
-    s.prefetch(5);
+    s.fill();
     const boards = [7, 8, 9, 10].map((n) => s.next(n));
     for (const b of boards.slice(0, 3)) b.catch(() => undefined);
     await vi.advanceTimersByTimeAsync(12_020);
     await expect(boards[3]).resolves.toMatchObject({ ropes: 10, seed: 1000 });
     for (const b of boards.slice(0, 3)) await expect(b).rejects.toEqual(failure("superseded"));
-    expect(workers.map((w) => w.requests.length)).toEqual([1, 1, 1, 1, 1]);
+    expect(workers.map((w) => w.requests[0]!.ropes)).toEqual([5, 7, 8, 9, 10]);
+    expect(workers.slice(0, 4).every((w) => w.terminated)).toBe(true);
     expect(timeouts).toEqual([]);
   });
 
@@ -172,7 +179,7 @@ describe("board source", () => {
 
   it("says whether a stalled board was one nobody was waiting for", async () => {
     const { s, background } = source({ silent: true });
-    s.prefetch(5);
+    s.fill();
     await vi.advanceTimersByTimeAsync(GENERATOR_TIMEOUT_MS + 20);
     const board = s.next(4);
     board.catch(() => undefined);
@@ -192,7 +199,7 @@ describe("board source", () => {
       onTimeout: (ropes) => timeouts.push(ropes),
       isHidden: () => hidden,
     });
-    s.prefetch(5);
+    s.fill();
     await vi.advanceTimersByTimeAsync(5 * GENERATOR_TIMEOUT_MS);
     expect(timeouts).toEqual([]);
     hidden = false;
@@ -204,32 +211,29 @@ describe("board source", () => {
     expect(timeouts).toEqual([5]);
   });
 
-  it("asks again for a board whose prefetch failed instead of reusing the failure", async () => {
-    const { s, workers } = source({ fail: { error: "no agreeing board in 10 tries from seed 7", kind: "no-board" }, failCount: 1 });
-    s.prefetch(4);
-    await vi.advanceTimersByTimeAsync(20);
-    const board = s.next(4);
-    await vi.advanceTimersByTimeAsync(20);
-    await expect(board).resolves.toMatchObject({ ropes: 4, prefetched: false });
-    expect(workers.flatMap((w) => w.requests)).toHaveLength(2);
+  it("asks again for a board whose background try failed instead of reusing the failure", async () => {
+    const { s, workers } = source({ ms: 100, fail: { error: "no agreeing board in 10 tries from seed 7", kind: "no-board" }, failCount: 1 }, { ms: 100 });
+    s.fill();
+    await vi.advanceTimersByTimeAsync(120);
+    const board = s.next(5);
+    await vi.advanceTimersByTimeAsync(220);
+    await expect(board).resolves.toMatchObject({ ropes: 5, prefetched: false });
+    expect(workers.flatMap((w) => w.requests).map((r) => r.ropes).slice(0, 3)).toEqual([5, 4, 5]);
   });
 
-  it("reports prefetches that crashed or failed while nobody was waiting for them", async () => {
-    const failed: [number, string][] = [];
-    const make = (behavior: Behavior) =>
-      new BoardSource({ spawn: () => new FakeWorker(behavior), onPrefetchFailed: (ropes, kind) => failed.push([ropes, kind]) });
-    make({ crash: true }).prefetch(4);
-    make({ fail: { error: "no agreeing board in 10 tries from seed 7", kind: "no-board" } }).prefetch(5);
-    const waited = make({ crash: true });
-    waited.prefetch(6);
-    waited.next(6).catch(() => undefined);
-    const silent = make({ silent: true });
-    silent.prefetch(7);
+  it("reports background boards that crashed or failed and moves on to the next size", async () => {
+    const reports = (behavior: Behavior) => {
+      const failed: [number, string][] = [];
+      new BoardSource({ spawn: () => new FakeWorker(behavior), onPrefetchFailed: (ropes, kind) => failed.push([ropes, kind]) }).fill();
+      return failed;
+    };
+    const crashed = reports({ crash: true });
+    const refused = reports({ fail: { error: "no agreeing board in 10 tries from seed 7", kind: "no-board" } });
+    const silent = reports({ silent: true });
     await vi.advanceTimersByTimeAsync(GENERATOR_TIMEOUT_MS + 20);
-    expect(failed).toEqual([
-      [4, "crashed"],
-      [5, "no-board"],
-    ]);
+    expect(crashed).toEqual([5, 4, 6, 7, 8, 9, 10].map((n) => [n, "crashed"]));
+    expect(refused).toEqual([5, 4, 6, 7, 8, 9, 10].map((n) => [n, "no-board"]));
+    expect(silent).toEqual([]);
   });
 
   it("fails as a crash when the generator cannot even start", async () => {
@@ -241,23 +245,119 @@ describe("board source", () => {
     await expect(s.next(4)).rejects.toEqual(failure("crashed"));
   });
 
-  it("says whether a board was prefetched", async () => {
-    const { s } = source({ ms: 1_000 });
-    s.prefetch(4);
-    await vi.advanceTimersByTimeAsync(1_020);
-    await expect(s.next(4)).resolves.toMatchObject({ prefetched: true });
-    const fresh = s.next(4);
-    await vi.advanceTimersByTimeAsync(1_020);
-    await expect(fresh).resolves.toMatchObject({ prefetched: false });
-  });
-
-  it("leaves the player's board alone when asked to prefetch while it is being made", async () => {
+  it("does not start filling while the player's board is being made", async () => {
     const { s, workers } = source({ ms: 5_000 });
     const board = s.next(8);
-    s.prefetch(8);
-    await vi.advanceTimersByTimeAsync(5_020);
-    await expect(board).resolves.toMatchObject({ ropes: 8 });
+    s.fill();
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(workers[0]!.requests.map((r) => r.ropes)).toEqual([8]);
+    await vi.advanceTimersByTimeAsync(1_020);
+    await expect(board).resolves.toMatchObject({ ropes: 8, prefetched: false });
     expect(workers).toHaveLength(1);
-    expect(workers[0]!.requests).toHaveLength(1);
+    expect(workers[0]!.requests.map((r) => r.ropes)).toEqual([8, 8]);
+  });
+
+  const stocked = (ropes: number) => ({ ropes, seed: ropes, generationMs: 1, tries: 1, snapshot: toSnapshot(easyBoard()) });
+
+  it("orders filling by distance from the current size, smaller first", () => {
+    expect(fillOrder(8, [4, 5, 6, 7, 8, 9, 10])).toEqual([8, 7, 9, 6, 10, 5, 4]);
+    expect(fillOrder(4, [10, 5])).toEqual([5, 10]);
+  });
+
+  it("hands out a stocked board at once and refills that size first", async () => {
+    const { s, workers, stock } = source({ ms: 1_000 });
+    for (const n of [4, 5, 6]) stock.put(stocked(n));
+    await expect(s.next(5)).resolves.toMatchObject({ ropes: 5, seed: 5, prefetched: true });
+    s.fill();
+    await vi.advanceTimersByTimeAsync(1_020);
+    expect(workers[0]!.requests.map((r) => r.ropes)).toEqual([5, 7]);
+    expect(stock.has(5)).toBe(true);
+  });
+
+  it("stocks a board the player stopped waiting for", async () => {
+    const { s, workers, stock } = source({ ms: 1_000 });
+    stock.put(stocked(5));
+    s.next(8).catch(() => undefined);
+    await expect(s.next(5)).resolves.toMatchObject({ ropes: 5, prefetched: true });
+    s.fill();
+    await vi.advanceTimersByTimeAsync(1_020);
+    expect(stock.has(8)).toBe(true);
+    expect(workers[0]!.requests.map((r) => r.ropes)).toEqual([8, 5]);
+  });
+
+  it("does not retry a board the player left before it timed out", async () => {
+    const { s, workers, stock, background } = source({ silent: true }, { ms: 100 });
+    stock.put(stocked(5));
+    const left = s.next(8);
+    left.catch(() => undefined);
+    await expect(s.next(5)).resolves.toMatchObject({ ropes: 5 });
+    await vi.advanceTimersByTimeAsync(GENERATOR_TIMEOUT_MS + 200);
+    await expect(left).rejects.toEqual(failure("timeout"));
+    expect(workers.flatMap((w) => w.requests).map((r) => r.ropes)).toEqual([8]);
+    expect(background).toEqual([true]);
+  });
+
+  it("moves on to the next size after a background board times out", async () => {
+    const { s, workers, stock } = source({ silent: true }, { ms: 100 });
+    s.fill();
+    await vi.advanceTimersByTimeAsync(GENERATOR_TIMEOUT_MS + 8 * 120);
+    expect(workers.flatMap((w) => w.requests).map((r) => r.ropes)).toEqual([5, 4, 6, 7, 8, 9, 10]);
+    expect(stock.has(5)).toBe(false);
+  });
+
+  it("fills a background size again after another size superseded it", async () => {
+    const { s, stock } = source({ ms: 1_000 });
+    s.fill();
+    const board = s.next(7);
+    await vi.advanceTimersByTimeAsync(8 * 1_020);
+    await expect(board).resolves.toMatchObject({ ropes: 7 });
+    expect(stock.has(5)).toBe(true);
+  });
+
+  it("fills every missing size once and then rests", async () => {
+    const { s, workers, stock } = source({ ms: 100 });
+    s.fill();
+    await vi.advanceTimersByTimeAsync(7 * 120);
+    expect(workers[0]!.requests.map((r) => r.ropes)).toEqual([5, 4, 6, 7, 8, 9, 10]);
+    for (const n of [4, 5, 6, 7, 8, 9, 10]) expect(stock.has(n)).toBe(true);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(workers[0]!.requests).toHaveLength(7);
+  });
+
+  it("gives a background board someone is waiting for to them and not to the stock", async () => {
+    const { s, stock } = source({ ms: 1_000 });
+    s.fill();
+    const board = s.next(5);
+    await vi.advanceTimersByTimeAsync(1_020);
+    await expect(board).resolves.toMatchObject({ ropes: 5, prefetched: true });
+    expect(stock.has(5)).toBe(false);
+  });
+
+  it("moves on after a failed background board and tries it again once a game starts", async () => {
+    const { s, workers, stock } = source({ ms: 100, fail: { error: "no agreeing board in 10 tries from seed 7", kind: "no-board" }, failCount: 1 });
+    s.fill();
+    await vi.advanceTimersByTimeAsync(7 * 120);
+    expect(workers[0]!.requests.map((r) => r.ropes)).toEqual([5, 4, 6, 7, 8, 9, 10]);
+    expect(stock.has(5)).toBe(false);
+    await expect(s.next(4)).resolves.toMatchObject({ ropes: 4, prefetched: true });
+    await vi.advanceTimersByTimeAsync(2 * 120);
+    expect(workers[0]!.requests.map((r) => r.ropes).slice(7)).toEqual([4, 5]);
+    expect(stock.has(5)).toBe(true);
+  });
+
+  it("does not report a board the player was waiting for", async () => {
+    const failed: number[] = [];
+    const s = new BoardSource({ spawn: () => new FakeWorker({ crash: true }), onPrefetchFailed: (ropes) => failed.push(ropes) });
+    s.next(6).catch(() => undefined);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(failed).toEqual([]);
+  });
+
+  it("reports the failed tries of every board it makes", async () => {
+    const dumps: string[][] = [];
+    const s = new BoardSource({ spawn: () => new FakeWorker({ ms: 10, dumps: ["d1"] }), onDumps: (d) => dumps.push(d) });
+    s.fill();
+    await vi.advanceTimersByTimeAsync(20);
+    expect(dumps[0]).toEqual(["d1"]);
   });
 });

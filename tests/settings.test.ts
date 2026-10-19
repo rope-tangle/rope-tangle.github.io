@@ -7,6 +7,9 @@ const broken: KeyValueStore = {
   setItem: () => {
     throw new Error("quota");
   },
+  removeItem: () => {
+    throw new Error("blocked");
+  },
 };
 
 describe("settings", () => {

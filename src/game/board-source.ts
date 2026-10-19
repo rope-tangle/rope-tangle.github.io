@@ -1,15 +1,22 @@
+import { ROPE_COUNTS } from "../board";
 import type { Engine } from "../engine/engine";
 import { fromSnapshot } from "../engine/snapshot";
 import type { GenerateFailureKind, GenerateRequest, GeneratorMessage } from "../generate/protocol";
+import { storageKeys } from "./records";
+import { memoryStore } from "./settings";
+import { Stock } from "./stock";
 
 export interface LoadedBoard {
   engine: Engine;
   seed: number;
   ropes: number;
-  dumps: string[];
   tries: number;
   generationMs: number;
   prefetched: boolean;
+}
+
+export function fillOrder(current: number, sizes: readonly number[]): number[] {
+  return [...sizes].sort((a, b) => Math.abs(a - current) - Math.abs(b - current) || a - b);
 }
 
 export function randomSeed(): number {
@@ -32,6 +39,8 @@ export interface BoardSourceOptions {
   onTimeout?: (ropes: number, background: boolean) => void;
   isHidden?: () => boolean;
   onPrefetchFailed?: (ropes: number, kind: BoardFailure["kind"]) => void;
+  stock?: Stock;
+  onDumps?: (dumps: string[]) => void;
 }
 
 export class BoardFailure extends Error {
@@ -50,12 +59,12 @@ interface Pending {
   reject: (e: BoardFailure) => void;
 }
 
-interface Slot {
+interface Job {
   id: number;
   ropes: number;
   promise: Promise<LoadedBoard>;
-  prefetch: boolean;
-  taken: boolean;
+  background: boolean;
+  claimed: boolean;
 }
 
 const spawnGenerator = (): GeneratorWorker => new Worker(new URL("../generate/worker.ts", import.meta.url), { type: "module" });
@@ -63,8 +72,13 @@ const spawnGenerator = (): GeneratorWorker => new Worker(new URL("../generate/wo
 export class BoardSource {
   private worker: GeneratorWorker | null = null;
   private readonly pending = new Map<number, Pending>();
-  private slot: Slot | null = null;
+  private job: Job | null = null;
+  private filling = false;
+  private current = 5;
+  private readonly failed = new Set<number>();
   private nextId = 1;
+  private readonly stock: Stock;
+  private readonly onDumps: (dumps: string[]) => void;
   private readonly spawnWorker: () => GeneratorWorker;
   private readonly onTimeout: (ropes: number, background: boolean) => void;
   private readonly isHidden: () => boolean;
@@ -75,6 +89,8 @@ export class BoardSource {
     this.onTimeout = options.onTimeout ?? (() => undefined);
     this.isHidden = options.isHidden ?? (() => false);
     this.onPrefetchFailed = options.onPrefetchFailed ?? (() => undefined);
+    this.stock = options.stock ?? new Stock(memoryStore(), storageKeys("/"));
+    this.onDumps = options.onDumps ?? (() => undefined);
   }
 
   resume(): void {
@@ -85,32 +101,43 @@ export class BoardSource {
   }
 
   next(ropes: number): Promise<LoadedBoard> {
+    this.current = ropes;
+    this.failed.clear();
+    const ready = this.stock.take(ropes);
+    if (ready) {
+      if (this.job && this.pending.has(this.job.id)) this.job.claimed = false;
+      this.pump();
+      return Promise.resolve({ engine: fromSnapshot(ready.snapshot), seed: ready.seed, ropes, tries: ready.tries, generationMs: ready.generationMs, prefetched: true });
+    }
     return this.obtain(ropes).catch((e: unknown) => {
-      if (e instanceof BoardFailure && e.kind === "timeout") return this.obtain(ropes);
+      if (e instanceof BoardFailure && e.kind === "timeout" && this.current === ropes) return this.obtain(ropes);
       throw e;
     });
   }
 
-  prefetch(ropes: number): void {
-    const s = this.slot;
-    if (s && s.ropes === ropes && !s.taken) return;
-    if (s && s.taken && this.pending.has(s.id)) return;
-    this.start(ropes, true).catch(() => undefined);
+  fill(): void {
+    this.filling = true;
+    this.pump();
   }
 
   private obtain(ropes: number): Promise<LoadedBoard> {
-    const s = this.slot;
-    if (s && s.ropes === ropes && (!s.taken || this.pending.has(s.id))) {
-      const prefetched = s.prefetch && !s.taken;
-      s.taken = true;
-      return s.promise.then((b) => ({ ...b, prefetched }));
+    const j = this.job;
+    if (j && j.ropes === ropes && this.pending.has(j.id)) {
+      const prefetched = j.background && !j.claimed;
+      j.claimed = true;
+      return j.promise.then((b) => ({ ...b, prefetched }));
     }
-    const promise = this.start(ropes, false);
-    this.slot!.taken = true;
-    return promise;
+    return this.start(ropes, false).promise;
   }
 
-  private start(ropes: number, prefetch: boolean): Promise<LoadedBoard> {
+  private pump(): void {
+    if (!this.filling || (this.job && this.pending.has(this.job.id))) return;
+    const missing = ROPE_COUNTS.filter((n) => !this.stock.has(n) && !this.failed.has(n));
+    const n = fillOrder(this.current, missing)[0];
+    if (n !== undefined) this.start(n, true);
+  }
+
+  private start(ropes: number, background: boolean): Job {
     if (this.worker && this.pending.size > 0) this.stop("superseded", "A newer board was requested");
     const id = this.nextId++;
     const promise = new Promise<LoadedBoard>((resolve, reject) => {
@@ -123,8 +150,20 @@ export class BoardSource {
         reject(new BoardFailure("crashed", e instanceof Error ? e.message : String(e)));
       }
     });
-    this.slot = { id, ropes, promise, prefetch, taken: false };
-    return promise;
+    const job: Job = { id, ropes, promise, background, claimed: !background };
+    this.job = job;
+    promise
+      .then(
+        () => undefined,
+        (e: unknown) => {
+          if (!job.claimed && !(e instanceof BoardFailure && e.kind === "superseded")) this.failed.add(ropes);
+        },
+      )
+      .finally(() => {
+        if (this.job === job) this.job = null;
+        queueMicrotask(() => this.pump());
+      });
+    return job;
   }
 
   private watch(id: number, ropes: number): ReturnType<typeof setTimeout> {
@@ -135,8 +174,8 @@ export class BoardSource {
         p.timer = this.watch(id, ropes);
         return;
       }
-      const s = this.slot;
-      this.onTimeout(ropes, s !== null && s.id === id && s.prefetch && !s.taken);
+      const j = this.job;
+      this.onTimeout(ropes, j !== null && j.id === id && !j.claimed);
       this.stop("timeout", "The board generator didn't answer");
     }, GENERATOR_TIMEOUT_MS);
   }
@@ -152,13 +191,13 @@ export class BoardSource {
         return;
       }
       this.pending.delete(m.id);
+      const j = this.job, unclaimed = j !== null && j.id === m.id && !j.claimed;
       if (m.ok) {
-        p.resolve({ engine: fromSnapshot(m.snapshot), seed: m.seed, ropes: p.ropes, dumps: m.dumps, tries: m.tries, generationMs: m.ms, prefetched: false });
+        this.onDumps(m.dumps);
+        if (unclaimed) this.stock.put({ ropes: p.ropes, seed: m.seed, generationMs: m.ms, tries: m.tries, snapshot: m.snapshot });
+        p.resolve({ engine: fromSnapshot(m.snapshot), seed: m.seed, ropes: p.ropes, tries: m.tries, generationMs: m.ms, prefetched: false });
       } else {
-        if (this.slot?.id === m.id && !this.slot.taken) {
-          this.slot = null;
-          this.onPrefetchFailed(p.ropes, m.kind);
-        }
+        if (unclaimed) this.onPrefetchFailed(p.ropes, m.kind);
         p.reject(new BoardFailure(m.kind, m.error));
       }
     });
@@ -169,11 +208,11 @@ export class BoardSource {
   }
 
   private stop(kind: BoardFailure["kind"], message: string): void {
-    const s = this.slot;
-    if (kind === "crashed" && s && !s.taken && this.pending.has(s.id)) this.onPrefetchFailed(s.ropes, kind);
+    const j = this.job;
+    if (kind === "crashed" && j && !j.claimed && this.pending.has(j.id)) this.onPrefetchFailed(j.ropes, kind);
     this.worker?.terminate();
     this.worker = null;
-    this.slot = null;
+    this.job = null;
     const pending = [...this.pending.values()];
     this.pending.clear();
     for (const p of pending) {

@@ -27,6 +27,8 @@ const SIZES = new Map<number, [number, number]>([
   [10, [7, 8]],
 ]);
 
+export const ROPE_COUNTS: readonly number[] = [...SIZES.keys()];
+
 export function rimParam(board: { width: number; height: number }, p: Point): number {
   const w = board.width, h = board.height;
   if (p.y <= 0) return Math.min(Math.max(p.x, 0), w);

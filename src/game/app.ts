@@ -1,5 +1,6 @@
 import { sanitizeReason } from "../analytics/errors";
 import { track, type GameTrigger, type ReplacedGameData } from "../analytics/umami";
+import { ROPE_COUNTS } from "../board";
 import { drawScene } from "../render/scene";
 import { fitView, ROPE_COLORS, type View } from "../render/ropes";
 import type { Point } from "../util/point";
@@ -8,8 +9,10 @@ import { guardBack } from "./back-guard";
 import { activeClock } from "./active-clock";
 import { BoardFailure, BoardSource, type LoadedBoard } from "./board-source";
 import { easyBoard } from "./easy";
+import { storageKeys } from "./records";
 import { Session, type Phase } from "./session";
 import { loadSettings, memoryStore, saveSettings, type KeyValueStore } from "./settings";
+import { Stock } from "./stock";
 
 const BAR_HEIGHT = 48;
 const SIDE_GAP = 32;
@@ -86,19 +89,24 @@ export function startApp(doc: Document, win: Window): void {
   const store = storageOf(win);
   const settings = loadSettings(store);
   const visitRopes = Number(params.get("ropes"));
-  if (testMode && Number.isInteger(visitRopes) && visitRopes >= 4 && visitRopes <= 10) settings.ropes = visitRopes;
+  if (testMode && ROPE_COUNTS.includes(visitRopes)) settings.ropes = visitRopes;
 
+  const dumps: string[] = [];
   const source = new BoardSource({
+    stock: new Stock(store, storageKeys(import.meta.env.BASE_URL)),
     onTimeout: (ropes, background) => track("generation-timeout", { ropes, background }),
     isHidden: () => doc.hidden,
     onPrefetchFailed: (ropes, reason) => track("prefetch-failed", { ropes, reason }),
+    onDumps: (d) => {
+      dumps.push(...d);
+      dumps.splice(0, Math.max(0, dumps.length - MAX_DUMPS));
+    },
   });
   const played = activeClock(() => win.performance.now(), () => doc.hidden);
   doc.addEventListener("visibilitychange", () => {
     played.visibilityChanged();
     if (!doc.hidden) source.resume();
   });
-  const dumps: string[] = [];
   const frames = { count: 0, total: 0, last: 0, ticks: 0, tickTotal: 0, draws: 0 };
   const clock = { now: () => win.performance.now() };
   let session: Session | null = null;
@@ -143,8 +151,6 @@ export function startApp(doc: Document, win: Window): void {
     gameRopes = b.ropes;
     gameStartedAt = played.now();
     colors = shuffledColors(b.seed);
-    dumps.push(...b.dumps);
-    dumps.splice(0, Math.max(0, dumps.length - MAX_DUMPS));
     winShown = false;
     layout();
     overlay.hidden = true;
@@ -174,14 +180,14 @@ export function startApp(doc: Document, win: Window): void {
       replaced = {};
     };
     if (testMode && params.get("board") === "easy") {
-      started({ engine: easyBoard(), seed: 1, ropes: 2, dumps: [], tries: 1, generationMs: 0, prefetched: false });
+      started({ engine: easyBoard(), seed: 1, ropes: 2, tries: 1, generationMs: 0, prefetched: false });
       return;
     }
     source.next(ropes).then(
       (b) => {
         if (token !== loadToken) return;
         started(b);
-        source.prefetch(ropes);
+        source.fill();
       },
       (e: unknown) => {
         if (token !== loadToken) return;
@@ -225,7 +231,7 @@ export function startApp(doc: Document, win: Window): void {
     }, TOAST_MS);
   });
 
-  for (let n = 4; n <= 10; n++) {
+  for (const n of ROPE_COUNTS) {
     const o = doc.createElement("option");
     o.value = String(n);
     o.textContent = String(n);

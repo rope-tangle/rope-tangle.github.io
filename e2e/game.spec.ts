@@ -309,6 +309,15 @@ test.describe("analytics", () => {
     });
   });
 
+  test("starts a second visit with a stocked board", async ({ page }) => {
+    await page.goto("?test=1&ropes=4");
+    await loaded(page);
+    await expect.poll(() => page.evaluate(() => localStorage.getItem("rope-tangle/ready/4") !== null), { timeout: 60_000 }).toBe(true);
+    await page.reload();
+    await loaded(page);
+    expect((await named(page, "new-game-started"))[0]).toMatchObject({ ropes: 4, trigger: "first-load", prefetched: true });
+  });
+
   test("keeps the replaced game's details when its replacement is itself replaced", async ({ page }) => {
     await page.goto("?test=1&ropes=4");
     await loaded(page);
