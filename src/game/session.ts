@@ -20,6 +20,7 @@ export class Session {
   readonly engine: Engine;
   phase: Phase = "idle";
   moves = 0;
+  revision = 0;
   pointer: Point | null = null;
   won = false;
   readonly fades = new Map<number, number>();
@@ -71,9 +72,10 @@ export class Session {
     const P = this.engine.hole(hole);
     this.engine.release([{ x: p.x, y: p.y }, { x: P.x, y: P.y }], hole);
     if (hole !== this.heldFrom) this.moves++;
+    this.revision++;
     this.heldFrom = null;
     this.pointer = null;
-    this.startBusy();
+    this.settle();
   }
 
   animating(): boolean {
@@ -121,7 +123,8 @@ export class Session {
       const cleared = E.clearFree(settled ? 1 : CLEAR_STREAK);
       if (cleared.length > 0) {
         for (const id of cleared) this.fades.set(id, 1);
-        this.startBusy();
+        this.revision++;
+        this.settle();
       } else if (settled) {
         this.phase = "idle";
       }
@@ -133,7 +136,7 @@ export class Session {
     return used;
   }
 
-  private startBusy(): void {
+  settle(): void {
     this.phase = "busy";
     this.settleFrames = 0;
     this.engine.resetDrift();

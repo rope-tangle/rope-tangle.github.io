@@ -87,6 +87,17 @@ describe("session", () => {
     expect(s.animating()).toBe(false);
   });
 
+  it("bumps its revision on each drop and each clear", () => {
+    const s = new Session(easyBoard());
+    s.grab({ x: 192, y: 256 });
+    s.drag({ x: 64, y: 0 });
+    s.release();
+    expect(s.revision).toBe(1);
+    runUntilIdle(s);
+    expect(s.engine.active()).toHaveLength(0);
+    expect(s.revision).toBe(2);
+  });
+
   it("always runs two substeps a frame, then respects the time budget", () => {
     const s = new Session(easyBoard());
     s.grab({ x: 192, y: 256 });

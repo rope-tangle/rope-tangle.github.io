@@ -17,12 +17,28 @@ function setup() {
   return { store, saver, session, advance: (ms: number) => (t += ms), saved: () => saver.load() };
 }
 
-function runUntilIdle(s: Session, saver: GameSaver): void {
-  for (let frame = 0; frame < 3000 && s.phase !== "idle"; frame++) {
-    s.step(still, 1e9);
+function moveEnd(s: Session, rope: number): void {
+  const E = s.engine, r = E.active()[rope]!;
+  const free = E.board.holes.findIndex((_, i) => !E.occupied().has(i));
+  expect(s.grab(E.hole(r.ends[1]!))).toBe(true);
+  s.drag(E.hole(free));
+  s.release();
+}
+
+function runUntilLanded(s: Session, saver: GameSaver): void {
+  saver.tick();
+  for (let frame = 0; frame < 3000 && s.engine.busy(); frame++) {
+    s.step(still, 1);
     saver.tick();
   }
-  saver.tick();
+}
+
+function runUntilIdle(s: Session, saver?: GameSaver): void {
+  for (let frame = 0; frame < 3000 && s.phase !== "idle"; frame++) {
+    s.step(still, 1e9);
+    saver?.tick();
+  }
+  saver?.tick();
 }
 
 describe("game saver", () => {
@@ -31,18 +47,93 @@ describe("game saver", () => {
     expect(saved()).toMatchObject({ ropes: 4, seed: 9, moves: 0, playedMs: 600 });
   });
 
-  it("saves again when the board comes to rest after a move", () => {
+  it("saves a move as soon as the dropped end has landed", () => {
     const { session, saver, saved, advance } = setup();
-    const r = session.engine.active()[0]!;
-    const free = session.engine.board.holes.findIndex((_, i) => !session.engine.occupied().has(i));
-    expect(session.grab(session.engine.hole(r.ends[1]!))).toBe(true);
-    session.drag(session.engine.hole(free));
-    session.release();
+    moveEnd(session, 0);
     advance(5_000);
     saver.tick();
     expect(saved()).toMatchObject({ moves: 0 });
-    runUntilIdle(session, saver);
+    runUntilLanded(session, saver);
+    expect(session.phase).toBe("busy");
     expect(saved()).toMatchObject({ moves: 1, playedMs: 5_600 });
+  });
+
+  it("saves a move whose end landed between two ticks", () => {
+    const { session, saver, saved } = setup();
+    moveEnd(session, 0);
+    while (session.engine.busy()) session.step(still, 1e9);
+    saver.tick();
+    expect(saved()).toMatchObject({ moves: 1 });
+  });
+
+  it("keeps a landed move when the next rope is grabbed before the board settles", () => {
+    const { session, saver, saved } = setup();
+    moveEnd(session, 0);
+    runUntilLanded(session, saver);
+    const r = session.engine.active()[1]!;
+    expect(session.grab(session.engine.hole(r.ends[0]!))).toBe(true);
+    saver.tick();
+    saver.hidden();
+    expect(saved()).toMatchObject({ moves: 1 });
+  });
+
+  it("writes a move twice: once it has landed and once at rest", () => {
+    let writes = 0;
+    const inner = memoryStore();
+    const counting: KeyValueStore = { ...inner, setItem: (k, v) => (writes++, inner.setItem(k, v)) };
+    const session = new Session(generateBoard(9, 4).engine), saver = new GameSaver(counting, KEY, () => 0);
+    saver.started({ session, ropes: 4, seed: 9, startedAt: 0 });
+    const before = writes;
+    moveEnd(session, 0);
+    runUntilLanded(session, saver);
+    runUntilIdle(session, saver);
+    for (let frame = 0; frame < 10; frame++) saver.tick();
+    expect(session.engine.active()).toHaveLength(4);
+    expect(writes - before).toBe(2);
+  });
+
+  it("waits to save an end that landed while another rope was held", () => {
+    const { session, saver, saved } = setup();
+    moveEnd(session, 0);
+    const r = session.engine.active()[1]!;
+    expect(session.grab(session.engine.hole(r.ends[0]!))).toBe(true);
+    for (let frame = 0; frame < 3000 && session.engine.busy(); frame++) {
+      session.step(still, 1);
+      saver.tick();
+    }
+    expect(session.engine.busy()).toBe(false);
+    saver.hidden();
+    expect(saved()).toMatchObject({ moves: 0 });
+    session.release();
+    runUntilLanded(session, saver);
+    expect(saved()).toMatchObject({ moves: 1 });
+  });
+
+  it("saves again when the board comes to rest after a move", () => {
+    const { session, saver, saved, advance } = setup();
+    moveEnd(session, 0);
+    runUntilLanded(session, saver);
+    advance(2_000);
+    runUntilIdle(session, saver);
+    expect(saved()).toMatchObject({ moves: 1, playedMs: 2_600 });
+  });
+
+  it("saves when a rope clears", () => {
+    const { session, saver, saved, advance } = setup();
+    advance(1_000);
+    session.engine.ropes[2]!.cleared = true;
+    session.revision++;
+    saver.tick();
+    expect(saved()).toMatchObject({ playedMs: 1_600 });
+  });
+
+  it("saves when hidden while the board is still settling", () => {
+    const { session, saver, saved, advance } = setup();
+    moveEnd(session, 0);
+    while (session.engine.busy()) session.step(still, 1e9);
+    advance(3_000);
+    saver.hidden();
+    expect(saved()).toMatchObject({ moves: 1, playedMs: 3_600 });
   });
 
   it("writes nothing when hidden while a rope is held", () => {
@@ -116,27 +207,25 @@ describe("game saver", () => {
 
 describe("resuming a saved game", () => {
   it("leaves the save in storage untouched when resuming", () => {
-    const { store, session } = setup();
+    const { store, session, saver } = setup();
+    moveEnd(session, 0);
+    runUntilLanded(session, saver);
     const before = store.getItem(KEY);
     const resumer = new GameSaver(store, KEY, () => 2_000);
-    resumer.resumed({ session, ropes: 4, seed: 9, startedAt: 400 });
-    resumer.tick();
+    const { session: resumed, startedAt } = restoreGame(resumer.load()!, 2_000);
+    resumer.resumed({ session: resumed, ropes: 4, seed: 9, startedAt });
+    runUntilIdle(resumed, resumer);
     expect(store.getItem(KEY)).toBe(before);
     resumer.hidden();
-    expect(resumer.load()).toMatchObject({ ropes: 4, seed: 9, playedMs: 1_600 });
+    expect(resumer.load()).toMatchObject({ ropes: 4, seed: 9, moves: 1 });
   });
 
-  it("saves a resumed game again once a move has come to rest", () => {
+  it("saves a resumed game again once a move has landed", () => {
     const store = memoryStore(), saver = new GameSaver(store, KEY, () => 0);
     const session = new Session(generateBoard(9, 4).engine);
     saver.resumed({ session, ropes: 4, seed: 9, startedAt: 0 });
-    const r = session.engine.active()[0]!;
-    const free = session.engine.board.holes.findIndex((_, i) => !session.engine.occupied().has(i));
-    session.grab(session.engine.hole(r.ends[1]!));
-    session.drag(session.engine.hole(free));
-    session.release();
-    saver.tick();
-    runUntilIdle(session, saver);
+    moveEnd(session, 0);
+    runUntilLanded(session, saver);
     expect(saver.load()).toMatchObject({ moves: 1 });
   });
 });
@@ -153,6 +242,16 @@ describe("restoring a game", () => {
     expect(session.moves).toBe(6);
     expect(session.engine.active().map((r) => r.id)).toEqual([0, 1, 3]);
     expect(50_000 - startedAt).toBe(7_500);
+  });
+
+  it("lets a board saved mid-settle carry on settling", () => {
+    const { session, saver } = setup();
+    moveEnd(session, 0);
+    runUntilLanded(session, saver);
+    const { session: resumed } = restoreGame(saver.load()!, 0);
+    expect(resumed.phase).toBe("busy");
+    runUntilIdle(resumed);
+    expect(resumed.phase).toBe("idle");
   });
 
   it("rejects a saved game with nothing left to solve", () => {
