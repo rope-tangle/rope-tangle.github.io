@@ -92,6 +92,20 @@ describe("ends", () => {
     expect(E.ropes[0]!.ends[0]).toBe(to);
     expect(E.held).toMatchObject({ rope: 1, end: 1 });
   });
+
+  it("seats every end only once nothing is held, flying or landing", () => {
+    const board = rimBoard(4, 5), E = new Engine(board);
+    E.straightRope(holeAt(board, 64, 0), holeAt(board, 128, 0));
+    expect(E.endsSeated()).toBe(true);
+    E.grab(0, 0);
+    expect(E.endsSeated()).toBe(false);
+    E.release([{ x: 192, y: 128 }], holeAt(board, 192, 128));
+    expect(E.endsSeated()).toBe(false);
+    while (E.flying.length > 0) E.substep(null);
+    expect(E.endsSeated()).toBe(false);
+    for (let guard = 0; E.busy() && guard < 5000; guard++) E.substep(null);
+    expect(E.endsSeated()).toBe(true);
+  });
 });
 
 describe("pegs", () => {

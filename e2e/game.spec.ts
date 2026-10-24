@@ -200,6 +200,27 @@ test.describe("saved games", () => {
     expect(replacedMs).toBeGreaterThanOrEqual(resumedMs);
   });
 
+  test("keeps a move made while the board was still settling", async ({ page }) => {
+    await page.goto("?test=1&ropes=4");
+    await loaded(page);
+    const s = await state(page);
+    const taken = new Set(s.ends.flat());
+    const free = [...Array(HOLES_ON_4_ROPE_BOARD).keys()].find((i) => !taken.has(i))!;
+    await drag(page, await page.evaluate((i) => window.ropeTangleTest!.holeToClient(i), s.ends[0]![1]!), await page.evaluate((i) => window.ropeTangleTest!.holeToClient(i), free));
+    const savedMoves = () => page.evaluate(() => JSON.parse(localStorage.getItem("rope-tangle/game") ?? "{}").moves);
+    await expect.poll(savedMoves).toBe(1);
+    expect((await state(page)).phase).toBe("busy");
+    const next = await page.evaluate((i) => window.ropeTangleTest!.holeToClient(i), s.ends[1]![0]!);
+    await page.mouse.move(next.x, next.y);
+    await page.mouse.down();
+    await expect.poll(async () => (await state(page)).phase).toBe("held");
+    await page.reload();
+    await loaded(page);
+    const after = await state(page);
+    expect(after.moves).toBe(1);
+    expect(after.ends[0]![1]).toBe(free);
+  });
+
   test("keeps the game through repeated reloads", async ({ page }) => {
     await page.goto("?test=1&ropes=4");
     await loaded(page);

@@ -1,6 +1,6 @@
 import { fromSnapshot, toSnapshot } from "../engine/snapshot";
 import { decodeGame, encodeGame, GAME_VERSION, readRecord, removeRecord, writeRecord, type DiscardReason, type SavedGame } from "./records";
-import { Session, type Phase } from "./session";
+import { Session } from "./session";
 import type { KeyValueStore } from "./settings";
 
 export interface CurrentGame {
@@ -12,7 +12,8 @@ export interface CurrentGame {
 
 export class GameSaver {
   private game: CurrentGame | null = null;
-  private lastPhase: Phase = "idle";
+  private lastRevision = 0;
+  private savedMidSettle = false;
   private readonly store: KeyValueStore;
   private readonly key: string;
   private readonly now: () => number;
@@ -28,14 +29,12 @@ export class GameSaver {
   }
 
   started(g: CurrentGame): void {
-    this.game = g;
-    this.lastPhase = g.session.phase;
+    this.track(g);
     this.write();
   }
 
   resumed(g: CurrentGame): void {
-    this.game = g;
-    this.lastPhase = g.session.phase;
+    this.track(g);
   }
 
   tick(): void {
@@ -46,23 +45,32 @@ export class GameSaver {
       this.game = null;
       return;
     }
-    const phase = g.session.phase;
-    if (phase === "idle" && this.lastPhase !== "idle") this.write();
-    this.lastPhase = phase;
+    const s = g.session;
+    const changed = s.revision !== this.lastRevision;
+    const cameToRest = this.savedMidSettle && s.phase === "idle";
+    if (s.engine.endsSeated() && (changed || cameToRest)) this.write();
   }
 
   hidden(): void {
-    if (this.game && this.game.session.phase === "idle" && !this.game.session.won) this.write();
+    if (this.game && this.game.session.engine.endsSeated() && !this.game.session.won) this.write();
   }
 
   forget(): void {
     this.game = null;
   }
 
+  private track(g: CurrentGame): void {
+    this.game = g;
+    this.lastRevision = g.session.revision;
+    this.savedMidSettle = false;
+  }
+
   private write(): void {
     const g = this.game;
     if (!g) return;
     const s = g.session;
+    this.lastRevision = s.revision;
+    this.savedMidSettle = s.phase !== "idle";
     writeRecord(this.store, this.key, encodeGame({
       ropes: g.ropes,
       seed: g.seed,
@@ -76,5 +84,6 @@ export class GameSaver {
 export function restoreGame(saved: SavedGame, now: number): { session: Session; startedAt: number } {
   const session = new Session(fromSnapshot(saved.snapshot));
   session.moves = saved.moves;
+  session.settle();
   return { session, startedAt: now - saved.playedMs };
 }

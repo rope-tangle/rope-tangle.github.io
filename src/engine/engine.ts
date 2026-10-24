@@ -140,6 +140,10 @@ export class Engine {
     return this.flying.length > 0 || this.landing.length > 0;
   }
 
+  endsSeated(): boolean {
+    return this.held === null && !this.busy();
+  }
+
   busyRopes(): Set<number> {
     const s = new Set<number>();
     for (const f of this.flying) s.add(f.rope);
