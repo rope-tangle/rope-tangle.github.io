@@ -349,7 +349,7 @@ export function startApp(doc: Document, win: Window): void {
   layout();
   win.addEventListener("pagehide", () => saver.hidden());
 
-  const saved = easy ? null : saver.load();
+  const saved = easy ? null : saver.load((reason) => track("saved-game-discarded", { reason }));
   if (saved) {
     const { session: resumed, startedAt } = restoreGame(saved, played.now());
     session = resumed;

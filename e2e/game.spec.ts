@@ -196,6 +196,20 @@ test.describe("saved games", () => {
     }
   });
 
+  test("reports a saved game it could not resume and starts a new board", async ({ page }) => {
+    await page.addInitScript(() => {
+      const events: [string, unknown][] = [];
+      window.sentEvents = events;
+      window.umami = { track: (name, data) => events.push([name, data]) };
+      localStorage.setItem("rope-tangle/game", "{not json");
+    });
+    await page.goto("?test=1&ropes=4");
+    await loaded(page);
+    const events = await page.evaluate(() => window.sentEvents ?? []);
+    expect(events.filter(([n]) => n === "saved-game-discarded")).toEqual([["saved-game-discarded", { reason: "unreadable" }]]);
+    expect(events.filter(([n]) => n === "new-game-started")).toMatchObject([["new-game-started", { trigger: "first-load" }]]);
+  });
+
   test("never saves the easy test board", async ({ page }) => {
     await page.goto("?test=1&board=easy");
     await loaded(page);

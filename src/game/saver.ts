@@ -1,5 +1,5 @@
 import { fromSnapshot, toSnapshot } from "../engine/snapshot";
-import { decodeGame, encodeGame, readRecord, removeRecord, writeRecord, type SavedGame } from "./records";
+import { decodeGame, encodeGame, readRecord, removeRecord, writeRecord, type DiscardReason, type SavedGame } from "./records";
 import { Session, type Phase } from "./session";
 import type { KeyValueStore } from "./settings";
 
@@ -23,8 +23,8 @@ export class GameSaver {
     this.now = now;
   }
 
-  load(): SavedGame | null {
-    return readRecord(this.store, this.key, decodeGame);
+  load(onDiscard?: (reason: DiscardReason) => void): SavedGame | null {
+    return readRecord(this.store, this.key, decodeGame, onDiscard);
   }
 
   started(g: CurrentGame): void {

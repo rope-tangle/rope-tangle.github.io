@@ -82,6 +82,14 @@ describe("game saver", () => {
     expect(saved()).toMatchObject({ playedMs: 600 });
   });
 
+  it("says why it dropped a saved game it could not resume", () => {
+    const store = memoryStore(), reasons: string[] = [];
+    store.setItem(KEY, "{not json");
+    const saver = new GameSaver(store, KEY, () => 0);
+    expect(saver.load((reason) => reasons.push(reason))).toBeNull();
+    expect(reasons).toEqual(["unreadable"]);
+  });
+
   it("carries on unsaved when storage refuses", () => {
     const refusing: KeyValueStore = {
       getItem: () => null,

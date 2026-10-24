@@ -108,7 +108,14 @@ export function removeRecord(store: KeyValueStore, key: string): void {
   }
 }
 
-export function readRecord<T>(store: KeyValueStore, key: string, decode: (v: unknown) => T | null): T | null {
+export type DiscardReason = "unreadable" | "version" | "invalid";
+
+export function readRecord<T>(
+  store: KeyValueStore,
+  key: string,
+  decode: (v: unknown) => T | null,
+  onDiscard: (reason: DiscardReason) => void = () => undefined,
+): T | null {
   let raw: string | null;
   try {
     raw = store.getItem(key);
@@ -116,13 +123,24 @@ export function readRecord<T>(store: KeyValueStore, key: string, decode: (v: unk
     return null;
   }
   if (raw === null) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    removeRecord(store, key);
+    onDiscard("unreadable");
+    return null;
+  }
   let value: T | null;
   try {
-    value = decode(JSON.parse(raw));
+    value = decode(parsed);
   } catch {
     value = null;
   }
-  if (value === null) removeRecord(store, key);
+  if (value === null) {
+    removeRecord(store, key);
+    onDiscard(isObj(parsed) && parsed["v"] !== RECORD_VERSION ? "version" : "invalid");
+  }
   return value;
 }
 
