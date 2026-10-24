@@ -36,7 +36,6 @@ export class GameSaver {
   resumed(g: CurrentGame): void {
     this.game = g;
     this.lastPhase = g.session.phase;
-    removeRecord(this.store, this.key);
   }
 
   tick(): void {

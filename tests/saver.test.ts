@@ -104,13 +104,13 @@ describe("game saver", () => {
 });
 
 describe("resuming a saved game", () => {
-  it("removes the save until the resumed game comes to rest or the page is hidden", () => {
+  it("leaves the save in storage untouched when resuming", () => {
     const { store, session } = setup();
+    const before = store.getItem(KEY);
     const resumer = new GameSaver(store, KEY, () => 2_000);
     resumer.resumed({ session, ropes: 4, seed: 9, startedAt: 400 });
-    expect(store.getItem(KEY)).toBeNull();
     resumer.tick();
-    expect(store.getItem(KEY)).toBeNull();
+    expect(store.getItem(KEY)).toBe(before);
     resumer.hidden();
     expect(resumer.load()).toMatchObject({ ropes: 4, seed: 9, playedMs: 1_600 });
   });
@@ -125,7 +125,6 @@ describe("resuming a saved game", () => {
     session.drag(session.engine.hole(free));
     session.release();
     saver.tick();
-    expect(store.getItem(KEY)).toBeNull();
     runUntilIdle(session, saver);
     expect(saver.load()).toMatchObject({ moves: 1 });
   });
