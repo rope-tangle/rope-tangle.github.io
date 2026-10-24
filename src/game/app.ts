@@ -8,6 +8,7 @@ import { mulberry32 } from "../util/rng";
 import { guardBack } from "./back-guard";
 import { activeClock } from "./active-clock";
 import { BoardFailure, BoardSource, type LoadedBoard } from "./board-source";
+import { bundledLoader, fillFromBundled } from "./bundled";
 import { easyBoard } from "./easy";
 import { storageKeys } from "./records";
 import { Session, type Phase } from "./session";
@@ -92,8 +93,10 @@ export function startApp(doc: Document, win: Window): void {
   if (testMode && ROPE_COUNTS.includes(visitRopes)) settings.ropes = visitRopes;
 
   const dumps: string[] = [];
+  const stock = new Stock(store, storageKeys(import.meta.env.BASE_URL));
+  const bundledLoads = fillFromBundled(stock, bundledLoader, settings.ropes);
   const source = new BoardSource({
-    stock: new Stock(store, storageKeys(import.meta.env.BASE_URL)),
+    stock,
     onTimeout: (ropes, background) => track("generation-timeout", { ropes, background }),
     isHidden: () => doc.hidden,
     onPrefetchFailed: (ropes, reason) => track("prefetch-failed", { ropes, reason }),
@@ -175,15 +178,16 @@ export function startApp(doc: Document, win: Window): void {
         tries: b.tries,
         waitMs: Math.round(played.now() - requestedAt),
         prefetched: b.prefetched,
+        bundled: b.bundled,
         ...replaced,
       });
       replaced = {};
     };
     if (testMode && params.get("board") === "easy") {
-      started({ engine: easyBoard(), seed: 1, ropes: 2, tries: 1, generationMs: 0, prefetched: false });
+      started({ engine: easyBoard(), seed: 1, ropes: 2, tries: 1, generationMs: 0, prefetched: false, bundled: false });
       return;
     }
-    source.next(ropes).then(
+    (bundledLoads.get(ropes) ?? Promise.resolve()).then(() => (token === loadToken ? source.next(ropes) : new Promise<never>(() => undefined))).then(
       (b) => {
         if (token !== loadToken) return;
         started(b);

@@ -7,7 +7,7 @@ import {
 } from "../src/game/records";
 import { memoryStore, type KeyValueStore } from "../src/game/settings";
 
-const board4 = (): ReadyBoard => ({ ropes: 4, seed: 7, generationMs: 120, tries: 1, snapshot: toSnapshot(generateBoard(7, 4).engine) });
+const board4 = (): ReadyBoard => ({ ropes: 4, seed: 7, generationMs: 120, tries: 1, bundled: false, snapshot: toSnapshot(generateBoard(7, 4).engine) });
 const roundTrip = (v: unknown): unknown => JSON.parse(JSON.stringify(v));
 const rope = (r: RopeJson | undefined) => {
   if (!r || "cleared" in r) throw new Error("expected a rope on the board");
@@ -20,12 +20,19 @@ describe("storage keys", () => {
     expect(storageKeys("/").ready(5)).toBe("rope-tangle/ready/5");
     expect(storageKeys("/dev/").game).toBe("rope-tangle/dev/game");
     expect(storageKeys("/dev/").ready(10)).toBe("rope-tangle/dev/ready/10");
+    expect(storageKeys("/").bundled(5)).toBe("rope-tangle/bundled/5");
+    expect(storageKeys("/dev/").bundled(5)).toBe("rope-tangle/dev/bundled/5");
   });
 });
 
 describe("ready records", () => {
   it("round-trip through JSON exactly", () => {
     const b = board4();
+    expect(decodeReady(roundTrip(encodeReady(b)), 4)).toEqual(b);
+  });
+
+  it("keep whether the board was bundled", () => {
+    const b = { ...board4(), bundled: true };
     expect(decodeReady(roundTrip(encodeReady(b)), 4)).toEqual(b);
   });
 

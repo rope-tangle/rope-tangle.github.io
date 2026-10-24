@@ -6,7 +6,7 @@ import { memoryStore, type KeyValueStore } from "../src/game/settings";
 import { Stock } from "../src/game/stock";
 
 const keys = storageKeys("/");
-const ready = (ropes: number, seed = 1): ReadyBoard => ({ ropes, seed, generationMs: 5, tries: 1, snapshot: toSnapshot(generateBoard(seed, ropes).engine) });
+const ready = (ropes: number, seed = 1): ReadyBoard => ({ ropes, seed, generationMs: 5, tries: 1, bundled: false, snapshot: toSnapshot(generateBoard(seed, ropes).engine) });
 
 describe("stock", () => {
   it("hands each stored board out once", () => {
@@ -33,6 +33,23 @@ describe("stock", () => {
     store.setItem(keys.ready(6), JSON.stringify({ v: 1, ropes: 6, seed: 1, generationMs: 1, tries: 1, snapshot: encodeSnapshot(toSnapshot(easyBoard())) }));
     expect(new Stock(store, keys).has(6)).toBe(false);
     expect(store.getItem(keys.ready(6))).toBeNull();
+  });
+
+  it("remembers across visits which sizes already got their bundled board", () => {
+    const store = memoryStore(), s = new Stock(store, keys);
+    s.put({ ...ready(4), bundled: true });
+    s.put(ready(5));
+    s.take(4);
+    const again = new Stock(store, keys);
+    expect(again.gotBundled(4)).toBe(true);
+    expect(again.gotBundled(5)).toBe(false);
+  });
+
+  it("marks a bundled board only once it has been dealt", () => {
+    const store = memoryStore(), s = new Stock(store, keys);
+    s.put({ ...ready(6), bundled: true });
+    expect(s.gotBundled(6)).toBe(false);
+    expect(new Stock(store, keys).gotBundled(6)).toBe(false);
   });
 
   it("keeps boards in memory when storage refuses them", () => {
