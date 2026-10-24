@@ -33,6 +33,12 @@ export class GameSaver {
     this.write();
   }
 
+  resumed(g: CurrentGame): void {
+    this.game = g;
+    this.lastPhase = g.session.phase;
+    removeRecord(this.store, this.key);
+  }
+
   tick(): void {
     const g = this.game;
     if (!g) return;

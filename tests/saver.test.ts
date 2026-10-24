@@ -95,6 +95,34 @@ describe("game saver", () => {
   });
 });
 
+describe("resuming a saved game", () => {
+  it("removes the save until the resumed game comes to rest or the page is hidden", () => {
+    const { store, session } = setup();
+    const resumer = new GameSaver(store, KEY, () => 2_000);
+    resumer.resumed({ session, ropes: 4, seed: 9, startedAt: 400 });
+    expect(store.getItem(KEY)).toBeNull();
+    resumer.tick();
+    expect(store.getItem(KEY)).toBeNull();
+    resumer.hidden();
+    expect(resumer.load()).toMatchObject({ ropes: 4, seed: 9, playedMs: 1_600 });
+  });
+
+  it("saves a resumed game again once a move has come to rest", () => {
+    const store = memoryStore(), saver = new GameSaver(store, KEY, () => 0);
+    const session = new Session(generateBoard(9, 4).engine);
+    saver.resumed({ session, ropes: 4, seed: 9, startedAt: 0 });
+    const r = session.engine.active()[0]!;
+    const free = session.engine.board.holes.findIndex((_, i) => !session.engine.occupied().has(i));
+    session.grab(session.engine.hole(r.ends[1]!));
+    session.drag(session.engine.hole(free));
+    session.release();
+    saver.tick();
+    expect(store.getItem(KEY)).toBeNull();
+    runUntilIdle(session, saver);
+    expect(saver.load()).toMatchObject({ moves: 1 });
+  });
+});
+
 describe("restoring a game", () => {
   it("restores moves, rope ids and the solve clock", () => {
     const E = generateBoard(9, 4).engine;

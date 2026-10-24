@@ -359,7 +359,7 @@ export function startApp(doc: Document, win: Window): void {
     settings.ropes = saved.ropes;
     ropesSelect.value = String(saved.ropes);
     saveSettings(store, settings);
-    saver.started({ session: resumed, ropes: saved.ropes, seed: saved.seed, startedAt });
+    saver.resumed({ session: resumed, ropes: saved.ropes, seed: saved.seed, startedAt });
     layout();
     overlay.hidden = true;
     updateMoves();

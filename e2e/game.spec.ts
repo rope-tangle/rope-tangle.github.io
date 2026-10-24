@@ -185,6 +185,17 @@ test.describe("saved games", () => {
     expect(events.map(([n]) => n)).not.toContain("new-game-started");
   });
 
+  test("keeps the game through repeated reloads", async ({ page }) => {
+    await page.goto("?test=1&ropes=4");
+    await loaded(page);
+    await moveOneEnd(page);
+    for (let i = 0; i < 2; i++) {
+      await page.reload();
+      await loaded(page);
+      expect((await state(page)).moves).toBe(1);
+    }
+  });
+
   test("never saves the easy test board", async ({ page }) => {
     await page.goto("?test=1&board=easy");
     await loaded(page);
