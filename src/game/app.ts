@@ -364,7 +364,7 @@ export function startApp(doc: Document, win: Window): void {
     overlay.hidden = true;
     updateMoves();
     track("game-resumed", { ropes: saved.ropes, moves: saved.moves, ropesLeft: resumed.engine.active().length, elapsedMs: Math.round(saved.playedMs) });
-    source.fill(saved.ropes);
+    void Promise.all(bundledLoads.values()).then(() => source.fill(saved.ropes));
   } else {
     load("first-load");
   }

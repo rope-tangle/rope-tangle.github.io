@@ -210,6 +210,31 @@ test.describe("saved games", () => {
     expect(events.filter(([n]) => n === "new-game-started")).toMatchObject([["new-game-started", { trigger: "first-load" }]]);
   });
 
+  test("waits for bundled boards before generating after a resume", async ({ page }) => {
+    await page.goto("?test=1&ropes=4");
+    await loaded(page);
+    await moveOneEnd(page);
+    await page.addInitScript(() => {
+      for (const k of Object.keys(localStorage)) if (/^rope-tangle\/(ready|bundled)\//.test(k)) localStorage.removeItem(k);
+    });
+    await page.route("**/assets/ready-*.js", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      await route.continue();
+    });
+    const workerAt: number[] = [], chunksAt: number[] = [];
+    page.on("request", (r) => {
+      if (r.url().includes("/assets/worker-")) workerAt.push(Date.now());
+    });
+    page.on("response", (r) => {
+      if (r.url().includes("/assets/ready-")) chunksAt.push(Date.now());
+    });
+    await page.reload();
+    await loaded(page);
+    expect((await state(page)).moves).toBe(1);
+    await expect.poll(() => chunksAt.length, { timeout: 15_000 }).toBe(7);
+    expect(workerAt.filter((t) => t < Math.max(...chunksAt))).toEqual([]);
+  });
+
   test("never saves the easy test board", async ({ page }) => {
     await page.goto("?test=1&board=easy");
     await loaded(page);
