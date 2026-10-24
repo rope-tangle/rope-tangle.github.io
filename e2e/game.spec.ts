@@ -147,6 +147,101 @@ test.describe("bundled boards", () => {
   });
 });
 
+test.describe("saved games", () => {
+  test.use({ serviceWorkers: "block" });
+
+  const HOLES_ON_4_ROPE_BOARD = 14;
+
+  async function moveOneEnd(page: Page): Promise<void> {
+    const s = await state(page);
+    const taken = new Set(s.ends.flat());
+    const free = [...Array(HOLES_ON_4_ROPE_BOARD).keys()].find((i) => !taken.has(i))!;
+    const from = await page.evaluate((i) => window.ropeTangleTest!.holeToClient(i), s.ends[0]![1]!);
+    const to = await page.evaluate((i) => window.ropeTangleTest!.holeToClient(i), free);
+    await drag(page, from, to);
+    await idle(page);
+  }
+
+  test("resumes the game after a reload", async ({ page }) => {
+    await page.addInitScript(() => {
+      const events: [string, unknown][] = [];
+      window.sentEvents = events;
+      window.umami = { track: (name, data) => events.push([name, data]) };
+    });
+    await page.goto("?test=1&ropes=4");
+    await loaded(page);
+    await moveOneEnd(page);
+    const before = await state(page);
+    expect(before.moves).toBe(1);
+    await page.reload();
+    await loaded(page);
+    const after = await state(page);
+    expect(after.moves).toBe(1);
+    expect(after.active).toBe(before.active);
+    const remaining = (ends: (number | null)[][], like: (number | null)[][]) => ends.filter((_, i) => like[i]![0] !== null);
+    expect(remaining(after.ends, after.ends)).toEqual(remaining(before.ends, after.ends));
+    const events = await page.evaluate(() => window.sentEvents ?? []);
+    expect(events.filter(([n]) => n === "game-resumed")).toEqual([["game-resumed", { ropes: 4, moves: 1, ropesLeft: before.active, elapsedMs: expect.any(Number) }]]);
+    expect(events.map(([n]) => n)).not.toContain("new-game-started");
+  });
+
+  test("keeps the game through repeated reloads", async ({ page }) => {
+    await page.goto("?test=1&ropes=4");
+    await loaded(page);
+    await moveOneEnd(page);
+    for (let i = 0; i < 2; i++) {
+      await page.reload();
+      await loaded(page);
+      expect((await state(page)).moves).toBe(1);
+    }
+  });
+
+  test("reports a saved game it could not resume and starts a new board", async ({ page }) => {
+    await page.addInitScript(() => {
+      const events: [string, unknown][] = [];
+      window.sentEvents = events;
+      window.umami = { track: (name, data) => events.push([name, data]) };
+      localStorage.setItem("rope-tangle/game", "{not json");
+    });
+    await page.goto("?test=1&ropes=4");
+    await loaded(page);
+    const events = await page.evaluate(() => window.sentEvents ?? []);
+    expect(events.filter(([n]) => n === "saved-game-discarded")).toEqual([["saved-game-discarded", { reason: "unreadable" }]]);
+    expect(events.filter(([n]) => n === "new-game-started")).toMatchObject([["new-game-started", { trigger: "first-load" }]]);
+  });
+
+  test("waits for bundled boards before generating after a resume", async ({ page }) => {
+    await page.goto("?test=1&ropes=4");
+    await loaded(page);
+    await moveOneEnd(page);
+    await page.addInitScript(() => {
+      for (const k of Object.keys(localStorage)) if (/^rope-tangle\/(ready|bundled)\//.test(k)) localStorage.removeItem(k);
+    });
+    await page.route("**/assets/ready-*.js", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      await route.continue();
+    });
+    const workerAt: number[] = [], chunksAt: number[] = [];
+    page.on("request", (r) => {
+      if (r.url().includes("/assets/worker-")) workerAt.push(Date.now());
+    });
+    page.on("response", (r) => {
+      if (r.url().includes("/assets/ready-")) chunksAt.push(Date.now());
+    });
+    await page.reload();
+    await loaded(page);
+    expect((await state(page)).moves).toBe(1);
+    await expect.poll(() => chunksAt.length, { timeout: 15_000 }).toBe(7);
+    expect(workerAt.filter((t) => t < Math.max(...chunksAt))).toEqual([]);
+  });
+
+  test("never saves the easy test board", async ({ page }) => {
+    await page.goto("?test=1&board=easy");
+    await loaded(page);
+    expect(await page.evaluate(() => localStorage.getItem("rope-tangle/game"))).toBeNull();
+  });
+});
+
 test.describe("failures", () => {
   test("offers another try when the board generator cannot start", async ({ page }) => {
     await page.route("**/assets/ready-*.js", (route) => route.abort());
@@ -361,6 +456,7 @@ test.describe("analytics", () => {
   });
 
   test("starts a second visit with a stocked board", async ({ page }) => {
+    await page.addInitScript(() => localStorage.removeItem("rope-tangle/game"));
     await page.goto("?test=1&ropes=4");
     await loaded(page);
     await expect.poll(() => page.evaluate(() => localStorage.getItem("rope-tangle/ready/4") !== null), { timeout: 60_000 }).toBe(true);

@@ -1,4 +1,5 @@
 import type { BoardFailure } from "../game/board-source";
+import type { DiscardReason } from "../game/records";
 import type { UnhandledErrorData } from "./errors";
 
 declare global {
@@ -32,6 +33,8 @@ export type Events = {
   "generation-timeout": { ropes: number; background: boolean };
   "prefetch-failed": { ropes: number; reason: BoardFailure["kind"] };
   "puzzle-completed": { ropes: number; moves: number; elapsedMs: number };
+  "game-resumed": { ropes: number; moves: number; ropesLeft: number; elapsedMs: number };
+  "saved-game-discarded": { reason: DiscardReason };
   "back-guard-caught": Record<string, never>;
   "unhandled-error": UnhandledErrorData;
 };
