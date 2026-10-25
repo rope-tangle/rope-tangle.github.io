@@ -3,6 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 declare global {
   interface Window {
     sentEvents?: [string, unknown][];
+    skipAhead?: (ms: number) => void;
   }
 }
 
@@ -29,6 +30,34 @@ async function loaded(page: Page): Promise<void> {
 async function idle(page: Page): Promise<void> {
   await expect.poll(async () => (await state(page)).phase, { timeout: 30_000 }).toBe("idle");
 }
+
+const HOLES_ON_4_ROPE_BOARD = 14;
+
+async function firstEndToFreeHole(page: Page): Promise<{ from: P; to: P; free: number }> {
+  const s = await state(page);
+  const taken = new Set(s.ends.flat());
+  const free = [...Array(HOLES_ON_4_ROPE_BOARD).keys()].find((i) => !taken.has(i))!;
+  const from = await page.evaluate((i) => window.ropeTangleTest!.holeToClient(i), s.ends[0]![1]!);
+  const to = await page.evaluate((i) => window.ropeTangleTest!.holeToClient(i), free);
+  return { from, to, free };
+}
+
+async function moveOneEnd(page: Page): Promise<void> {
+  const { from, to } = await firstEndToFreeHole(page);
+  await drag(page, from, to);
+  await idle(page);
+}
+
+const captureEvents = (page: Page) =>
+  page.addInitScript(() => {
+    const events: [string, unknown][] = [];
+    window.sentEvents = events;
+    window.umami = { track: (name, data) => events.push([name, data]) };
+  });
+
+const savedMoves = (page: Page) => page.evaluate(() => JSON.parse(localStorage.getItem("rope-tangle/game") ?? "{}").moves);
+
+const buildCookie = (value: string) => ({ name: "build", value, url: test.info().project.use.baseURL! });
 
 test.describe("easy board", () => {
   test.beforeEach(async ({ page }) => {
@@ -150,24 +179,8 @@ test.describe("bundled boards", () => {
 test.describe("saved games", () => {
   test.use({ serviceWorkers: "block" });
 
-  const HOLES_ON_4_ROPE_BOARD = 14;
-
-  async function moveOneEnd(page: Page): Promise<void> {
-    const s = await state(page);
-    const taken = new Set(s.ends.flat());
-    const free = [...Array(HOLES_ON_4_ROPE_BOARD).keys()].find((i) => !taken.has(i))!;
-    const from = await page.evaluate((i) => window.ropeTangleTest!.holeToClient(i), s.ends[0]![1]!);
-    const to = await page.evaluate((i) => window.ropeTangleTest!.holeToClient(i), free);
-    await drag(page, from, to);
-    await idle(page);
-  }
-
   test("resumes the game after a reload", async ({ page }) => {
-    await page.addInitScript(() => {
-      const events: [string, unknown][] = [];
-      window.sentEvents = events;
-      window.umami = { track: (name, data) => events.push([name, data]) };
-    });
+    await captureEvents(page);
     await page.goto("?test=1&ropes=4");
     await loaded(page);
     await moveOneEnd(page);
@@ -204,11 +217,9 @@ test.describe("saved games", () => {
     await page.goto("?test=1&ropes=4");
     await loaded(page);
     const s = await state(page);
-    const taken = new Set(s.ends.flat());
-    const free = [...Array(HOLES_ON_4_ROPE_BOARD).keys()].find((i) => !taken.has(i))!;
-    await drag(page, await page.evaluate((i) => window.ropeTangleTest!.holeToClient(i), s.ends[0]![1]!), await page.evaluate((i) => window.ropeTangleTest!.holeToClient(i), free));
-    const savedMoves = () => page.evaluate(() => JSON.parse(localStorage.getItem("rope-tangle/game") ?? "{}").moves);
-    await expect.poll(savedMoves).toBe(1);
+    const { from, to, free } = await firstEndToFreeHole(page);
+    await drag(page, from, to);
+    await expect.poll(() => savedMoves(page)).toBe(1);
     expect((await state(page)).phase).toBe("busy");
     const next = await page.evaluate((i) => window.ropeTangleTest!.holeToClient(i), s.ends[1]![0]!);
     await page.mouse.move(next.x, next.y);
@@ -233,12 +244,8 @@ test.describe("saved games", () => {
   });
 
   test("reports a saved game it could not resume and starts a new board", async ({ page }) => {
-    await page.addInitScript(() => {
-      const events: [string, unknown][] = [];
-      window.sentEvents = events;
-      window.umami = { track: (name, data) => events.push([name, data]) };
-      localStorage.setItem("rope-tangle/game", "{not json");
-    });
+    await captureEvents(page);
+    await page.addInitScript(() => localStorage.setItem("rope-tangle/game", "{not json"));
     await page.goto("?test=1&ropes=4");
     await loaded(page);
     const events = await page.evaluate(() => window.sentEvents ?? []);
@@ -464,11 +471,7 @@ test.describe("analytics", () => {
   const named = (page: Page, name: string) => page.evaluate((n) => (window.sentEvents ?? []).filter(([e]) => e === n).map(([, d]) => d), name);
 
   test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => {
-      const events: [string, unknown][] = [];
-      window.sentEvents = events;
-      window.umami = { track: (name, data) => events.push([name, data]) };
-    });
+    await captureEvents(page);
   });
 
   test("reports a started game, its solution and the game that replaces it", async ({ page }) => {
@@ -629,5 +632,154 @@ test.describe("analytics tracker", () => {
     await expect(script).toHaveAttribute("data-website-id", "e2e-site");
     await expect(script).toHaveAttribute("data-performance", "true");
     await expect(script).toHaveAttribute("data-tag", "e2e-build");
+  });
+});
+
+test.describe("app updates", () => {
+
+  async function controlledPage(page: Page): Promise<void> {
+    await page.goto("?test=1&ropes=4");
+    await loaded(page);
+    await page.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
+    await page.reload();
+    await loaded(page);
+    await expect.poll(() => page.evaluate(() => navigator.serviceWorker.controller !== null)).toBe(true);
+    await expect(page.locator("#update")).toBeHidden();
+  }
+
+  async function deployNext(page: Page): Promise<void> {
+    await page.context().addCookies([buildCookie("next")]);
+    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    await expect(page.locator("#update")).toBeVisible({ timeout: 15_000 });
+  }
+
+  test("applies an update on a tap and keeps the game", async ({ page }) => {
+    await controlledPage(page);
+    await expect(page.locator("#deploy-id")).toHaveText("e2e-build");
+    await moveOneEnd(page);
+    await deployNext(page);
+    await page.locator("#update").click();
+    await expect(page.locator("#deploy-id")).toHaveText("e2e-next", { timeout: 15_000 });
+    await loaded(page);
+    expect((await state(page)).moves).toBe(1);
+  });
+
+  test("applies an update without the fallback on a page that loaded before the worker was active", async ({ page }) => {
+    await page.goto("?test=1&ropes=4");
+    await loaded(page);
+    await page.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
+    expect(await page.evaluate(() => navigator.serviceWorker.controller === null)).toBe(true);
+    await deployNext(page);
+    const tapped = Date.now();
+    await page.locator("#update").click();
+    await expect(page.locator("#deploy-id")).toHaveText("e2e-next", { timeout: 15_000 });
+    expect(Date.now() - tapped).toBeLessThan(2_500);
+  });
+
+  test("on return to the foreground, waits for a held end to be dropped before reloading", async ({ page }) => {
+    await controlledPage(page);
+    await deployNext(page);
+    const { from, to } = await firstEndToFreeHole(page);
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(to.x, to.y, { steps: 12 });
+    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    await page.waitForTimeout(4_000);
+    await expect(page.locator("#deploy-id")).toHaveText("e2e-build");
+    expect((await state(page)).phase).toBe("held");
+    await page.mouse.up();
+    await expect(page.locator("#deploy-id")).toHaveText("e2e-next", { timeout: 15_000 });
+    await loaded(page);
+    expect((await state(page)).moves).toBe(1);
+    expect(await savedMoves(page)).toBe(1);
+  });
+
+  test("reports a new build that fails to install while the page is still loading", async ({ page }) => {
+    await captureEvents(page);
+    await controlledPage(page);
+    await page.route("**/e2e-tracker.js", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      await route.fulfill({ status: 404 });
+    });
+    await page.context().addCookies([buildCookie("broken")]);
+    await page.reload();
+    await loaded(page);
+    await expect.poll(() => page.evaluate(() => (window.sentEvents ?? []).map(([n]) => n)), { timeout: 15_000 }).toContain("pwa-update-install-failed");
+    expect(await page.evaluate(() => window.sentEvents ?? [])).toContainEqual(["pwa-update-install-failed", { isUpdate: true, online: true }]);
+  });
+
+  test("still offers an update after an earlier one failed to install", async ({ page }) => {
+    await captureEvents(page);
+    await page.addInitScript(() => {
+      const now = performance.now.bind(performance);
+      let shift = 0;
+      performance.now = () => now() + shift;
+      window.skipAhead = (ms) => {
+        shift += ms;
+      };
+    });
+    await controlledPage(page);
+    await page.evaluate(() => window.skipAhead!(61_000));
+    await page.context().addCookies([buildCookie("broken")]);
+    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    await expect.poll(() => page.evaluate(() => (window.sentEvents ?? []).map(([n]) => n)), { timeout: 15_000 }).toContain("pwa-update-install-failed");
+    await page.context().addCookies([buildCookie("next")]);
+    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    await expect(page.locator("#update")).toBeVisible({ timeout: 15_000 });
+    const tapped = Date.now();
+    await page.locator("#update").click();
+    await expect(page.locator("#deploy-id")).toHaveText("e2e-next", { timeout: 15_000 });
+    expect(Date.now() - tapped).toBeLessThan(2_500);
+  });
+
+  test("refuses new grabs while waiting to reload", async ({ page }) => {
+    await controlledPage(page);
+    await deployNext(page);
+    const s = await state(page);
+    const other = await page.evaluate((i) => window.ropeTangleTest!.holeToClient(i), s.ends[1]![0]!);
+    const { from, to } = await firstEndToFreeHole(page);
+    await drag(page, from, to);
+    const during = await page.evaluate((p) => {
+      const saved: unknown = JSON.parse(localStorage.getItem("rope-tangle/game") ?? "{}").moves;
+      document.dispatchEvent(new Event("visibilitychange"));
+      document.getElementById("board")!.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 7, clientX: p.x, clientY: p.y, bubbles: true }));
+      return { saved, held: window.ropeTangleTest!.state().held };
+    }, other);
+    expect(during).toEqual({ saved: 0, held: null });
+    await expect(page.locator("#deploy-id")).toHaveText("e2e-next", { timeout: 15_000 });
+    await loaded(page);
+    expect((await state(page)).moves).toBe(1);
+  });
+
+  test("reports a new build that fails to install and stays on the current one", async ({ page }) => {
+    await captureEvents(page);
+    await controlledPage(page);
+    await page.context().addCookies([buildCookie("broken")]);
+    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    await expect.poll(() => page.evaluate(() => (window.sentEvents ?? []).map(([n]) => n)), { timeout: 15_000 }).toContain("pwa-update-install-failed");
+    expect(await page.evaluate(() => window.sentEvents ?? [])).toContainEqual(["pwa-update-install-failed", { isUpdate: true, online: true }]);
+    await expect(page.locator("#update")).toBeHidden();
+    await expect(page.locator("#deploy-id")).toHaveText("e2e-build");
+  });
+
+  test("lets a second open tab finish its move before it reloads into the new build", async ({ page, context }) => {
+    await controlledPage(page);
+    const other = await context.newPage();
+    await other.goto("?test=1&ropes=4");
+    await loaded(other);
+    const { from, to } = await firstEndToFreeHole(other);
+    await other.mouse.move(from.x, from.y);
+    await other.mouse.down();
+    await other.mouse.move(to.x, to.y, { steps: 12 });
+    await deployNext(page);
+    await page.locator("#update").click();
+    await expect(page.locator("#deploy-id")).toHaveText("e2e-next", { timeout: 15_000 });
+    await other.waitForTimeout(1_500);
+    await expect(other.locator("#deploy-id")).toHaveText("e2e-build");
+    expect((await state(other)).phase).toBe("held");
+    await other.mouse.up();
+    await expect(other.locator("#deploy-id")).toHaveText("e2e-next", { timeout: 15_000 });
+    await loaded(other);
+    expect((await state(other)).moves).toBe(1);
   });
 });

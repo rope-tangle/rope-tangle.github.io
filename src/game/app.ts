@@ -11,6 +11,7 @@ import { BoardFailure, BoardSource, type LoadedBoard } from "./board-source";
 import { bundledLoader, fillFromBundled } from "./bundled";
 import { easyBoard } from "./easy";
 import { storageKeys } from "./records";
+import { ReloadPreparer } from "./reload";
 import { GameSaver, restoreGame } from "./saver";
 import { Session, type Phase } from "./session";
 import { loadSettings, memoryStore, saveSettings, type KeyValueStore } from "./settings";
@@ -70,7 +71,11 @@ export function storageOf(win: Window): KeyValueStore {
   }
 }
 
-export function startApp(doc: Document, win: Window): void {
+export interface App {
+  prepareReload(): Promise<void>;
+}
+
+export function startApp(doc: Document, win: Window): App {
   const canvas = element(doc, "board", HTMLCanvasElement);
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("no 2d context");
@@ -110,6 +115,7 @@ export function startApp(doc: Document, win: Window): void {
   });
   const played = activeClock(() => win.performance.now(), () => doc.hidden);
   const saver = new GameSaver(store, keys.game, () => played.now());
+  const reload = new ReloadPreparer(() => session, () => saver.hidden());
   doc.addEventListener("visibilitychange", () => {
     if (doc.hidden) saver.hidden();
     played.visibilityChanged();
@@ -214,7 +220,7 @@ export function startApp(doc: Document, win: Window): void {
   };
 
   canvas.addEventListener("pointerdown", (ev) => {
-    if (activePointer !== null || !session || !session.grab(toBoard(ev))) return;
+    if (reload.closed || activePointer !== null || !session || !session.grab(toBoard(ev))) return;
     activePointer = ev.pointerId;
     canvas.setPointerCapture(ev.pointerId);
   });
@@ -302,6 +308,7 @@ export function startApp(doc: Document, win: Window): void {
         showOverlay(settings.showMoves ? `Solved · ${n} ${n === 1 ? "move" : "moves"}` : "✓", { label: "Next", action: () => load("next") });
       }
     }
+    reload.check();
     frames.ticks++;
     frames.tickTotal += clock.now() - tickStart;
     win.requestAnimationFrame(tick);
@@ -369,4 +376,5 @@ export function startApp(doc: Document, win: Window): void {
     load("first-load");
   }
   win.requestAnimationFrame(tick);
+  return { prepareReload: () => reload.prepare() };
 }
