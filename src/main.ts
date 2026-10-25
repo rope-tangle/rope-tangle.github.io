@@ -19,11 +19,5 @@ if (deployId) {
 
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
   const base = import.meta.env.BASE_URL;
-  navigator.serviceWorker
-    .register(`${base}sw.js`, { scope: base })
-    .then(() => navigator.serviceWorker.ready)
-    .then((reg) => {
-      new PerformanceObserver((list) => reg.active?.postMessage({ cacheUrls: list.getEntries().map((e) => e.name) })).observe({ type: "resource", buffered: true });
-    })
-    .catch(() => undefined);
+  navigator.serviceWorker.register(`${base}sw.js`, { scope: base }).catch(() => undefined);
 }

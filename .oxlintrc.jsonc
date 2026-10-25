@@ -5,6 +5,7 @@
   "categories": { "correctness": "error", "suspicious": "error" },
   "rules": {
     "no-console": "error",
+    "no-underscore-dangle": ["error", { "allow": ["__WB_MANIFEST"] }],
     "typescript/no-explicit-any": "error",
     "typescript/only-throw-error": "error",
     "unicorn/no-array-sort": "off",
