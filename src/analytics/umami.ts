@@ -27,6 +27,17 @@ export type NewGameStartedData = ReplacedGameData & {
   bundled: boolean;
 };
 
+export type UpdateTrigger = "manual" | "focus-regain";
+
+export type PwaRegisterFailedData = {
+  reason: string;
+  valueType: string;
+  name: string;
+  registerFunction: "native" | "replaced" | "unavailable";
+  displayMode: "standalone" | "browser";
+  visibilityState: string;
+};
+
 export type Events = {
   "new-game-started": NewGameStartedData;
   "new-game-failed": ReplacedGameData & { ropes: number; trigger: GameTrigger; reason: BoardFailure["kind"]; detail: string };
@@ -37,6 +48,13 @@ export type Events = {
   "saved-game-discarded": { reason: DiscardReason };
   "back-guard-caught": Record<string, never>;
   "unhandled-error": UnhandledErrorData;
+  "pwa-update-detected": Record<string, never>;
+  "pwa-update-applied": { trigger: UpdateTrigger };
+  "pwa-update-apply-failed": { reason: string };
+  "pwa-update-fallback-reload": Record<string, never>;
+  "pwa-update-check-failed": { reason: string };
+  "pwa-update-install-failed": { isUpdate: boolean; online: boolean };
+  "pwa-register-failed": PwaRegisterFailedData;
 };
 
 export interface TrackerConfig {

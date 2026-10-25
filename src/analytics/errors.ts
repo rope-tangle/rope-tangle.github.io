@@ -15,9 +15,16 @@ export function sanitizeReason(value: unknown): string {
   return reason.slice(0, MAX_LENGTH);
 }
 
-function errorName(value: unknown): string {
+export function errorName(value: unknown): string {
   if (value instanceof Error) return value.name || "Error";
   return value === null ? "null" : typeof value;
+}
+
+export function describeValueType(value: unknown): string {
+  if (value === null) return "null";
+  if (typeof value !== "object") return typeof value;
+  const name: unknown = Object.getPrototypeOf(value)?.constructor?.name;
+  return typeof name === "string" && name !== "" ? name : "object";
 }
 
 export function createErrorReporter(send: (data: UnhandledErrorData) => void): (source: UnhandledErrorData["source"], cause: unknown) => void {
