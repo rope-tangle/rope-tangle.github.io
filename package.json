@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && tsc --noEmit -p tsconfig.sw.json && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.sw.json",
     "lint": "oxlint --disable-nested-config -c .oxlintrc.jsonc src tests e2e",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -22,6 +22,9 @@
     "oxlint-tsgolint": "~7.0.2003",
     "typescript": "~7.0.2",
     "vite": "^8.3.1",
-    "vitest": "^5.0.2"
+    "vite-plugin-pwa": "^2.0.0",
+    "vitest": "^5.0.2",
+    "workbox-precaching": "^7.4.1",
+    "workbox-routing": "^7.4.1"
   }
 }

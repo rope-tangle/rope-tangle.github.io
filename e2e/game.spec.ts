@@ -308,6 +308,20 @@ test.describe("offline", () => {
       .toBe(true);
   });
 
+  test("drops the old worker's cache and keeps the precache", async ({ page }) => {
+    await page.goto("?test=1");
+    await loaded(page);
+    await page.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
+    await page.evaluate(() => caches.open("rope-tangle-v1").then(() => undefined));
+    await page.evaluate(() => navigator.serviceWorker.getRegistration().then((r) => r?.unregister()));
+    await page.reload();
+    await loaded(page);
+    await page.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
+    await expect
+      .poll(() => page.evaluate(() => caches.keys()), { timeout: 15_000 })
+      .toEqual([expect.stringContaining("workbox-precache")]);
+  });
+
   test("plays offline after one visit", async ({ page, context }) => {
     await page.goto("?test=1");
     await loaded(page);
