@@ -16,7 +16,15 @@
       #moves { margin-left: auto; font-size: 16px; color: #333; min-width: 2ch; text-align: right; }
       #board { position: fixed; top: 48px; left: 0; display: block; }
       #overlay { position: fixed; left: 50%; top: 45%; transform: translate(-50%, -50%); background: #fff; padding: 18px 26px; border-radius: 14px; box-shadow: 0 4px 20px #0003; font-size: 20px; text-align: center; z-index: 3; display: flex; flex-direction: column; gap: 12px; align-items: center; }
-      #overlay button { font-size: 18px; padding: 6px 18px; border-radius: 10px; border: 1px solid #bbb; background: #f7f7f7; }
+      #overlay button { font-size: 18px; padding: 6px 18px; border-radius: 10px; border: 1px solid #bbb; background: #f7f7f7; white-space: nowrap; }
+      #overlay .row { display: flex; gap: 10px; }
+      .fab { position: fixed; bottom: 22px; width: 54px; height: 54px; border-radius: 50%; border: 1px solid #bbb; background: #ffffffe6; box-shadow: 0 2px 8px #0003; color: #222; padding: 0; z-index: 2; display: grid; place-items: center; }
+      .fab svg { display: block; width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+      #redo svg { transform: scaleX(-1); }
+      .fab:disabled { color: #bbb; box-shadow: none; }
+      #undo { left: 22px; }
+      #redo { right: 22px; }
+      #bar button:disabled { color: #aaa; }
       dialog { border: none; border-radius: 14px; box-shadow: 0 4px 20px #0003; padding: 18px; font-size: 16px; }
       dialog label, dialog button { display: block; margin: 8px 0; font-size: 16px; }
       #toast { position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%); background: #333d; color: #fff; padding: 10px 18px; border-radius: 12px; font-size: 16px; pointer-events: none; z-index: 4; }
@@ -28,11 +36,14 @@
     <header id="bar">
       <select id="ropes" aria-label="Ropes"></select>
       <button id="new">New</button>
+      <button id="start-over" disabled>Start over</button>
       <span id="moves"></span>
       <button id="settings-button" aria-label="Settings">⚙︎</button>
       <button id="update" hidden>Update ready</button>
     </header>
     <canvas id="board"></canvas>
+    <button id="undo" class="fab" aria-label="Undo" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4.5 4 9.5l5 5M4 9.5h11a5 5 0 0 1 0 10h-4" /></svg></button>
+    <button id="redo" class="fab" aria-label="Redo" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4.5 4 9.5l5 5M4 9.5h11a5 5 0 0 1 0 10h-4" /></svg></button>
     <div id="overlay" hidden></div>
     <div id="toast" hidden></div>
     <dialog id="settings">
@@ -40,6 +51,11 @@
       <button id="show-dump">Debug info</button>
       <textarea id="dump" readonly hidden></textarea>
       <button id="close-settings">Close</button>
+    </dialog>
+    <dialog id="confirm-start-over">
+      <p>Start over this board?</p>
+      <button id="confirm-start-over-yes">Start over</button>
+      <button id="confirm-start-over-no">Cancel</button>
     </dialog>
     <script type="module" src="/src/main.ts"></script>
   </body>

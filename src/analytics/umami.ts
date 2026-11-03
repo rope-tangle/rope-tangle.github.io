@@ -43,7 +43,8 @@ export type Events = {
   "new-game-failed": ReplacedGameData & { ropes: number; trigger: GameTrigger; reason: BoardFailure["kind"]; detail: string };
   "generation-timeout": { ropes: number; background: boolean };
   "prefetch-failed": { ropes: number; reason: BoardFailure["kind"] };
-  "puzzle-completed": { ropes: number; moves: number; elapsedMs: number };
+  "puzzle-completed": { ropes: number; moves: number; elapsedMs: number; undos: number; redos: number; startOvers: number; replay: boolean };
+  "game-restarted": { ropes: number; moves: number; ropesLeft: number; via: "start-over" | "try-again" };
   "game-resumed": { ropes: number; moves: number; ropesLeft: number; elapsedMs: number };
   "saved-game-discarded": { reason: DiscardReason };
   "back-guard-caught": Record<string, never>;

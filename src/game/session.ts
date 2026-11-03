@@ -177,19 +177,20 @@ export class Session {
     return this.request("redo");
   }
 
-  startOver(): boolean {
+  startOver(): "start-over" | "try-again" | null {
     const start = this.history.start;
-    if (start === null || this.phase === "held") return false;
+    if (start === null || this.phase === "held") return null;
+    const kind = this.won ? "try-again" : "start-over";
     this.history.clear();
     this.queued = null;
-    if (this.won) {
+    if (kind === "try-again") {
       this.won = false;
       this.replay = true;
     } else {
       this.startOvers++;
     }
     this.jump(start, 0);
-    return true;
+    return kind;
   }
 
   private request(action: "undo" | "redo"): boolean {
