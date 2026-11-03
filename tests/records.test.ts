@@ -7,7 +7,7 @@ import { generateBoard } from "../src/generate/generate";
 import { GENERATOR_VERSION } from "../src/generate/version";
 import {
   decodeGame, decodeReady, decodeSnapshot, encodeGame, encodeReady, encodeSnapshot, HISTORY_DECIMALS, readRecord, removeRecord, storageKeys, writeRecord,
-  type ReadyBoard, type ReadyJson, type RopeJson, type SavedGame, type SnapshotJson,
+  type GameJson, type ReadyBoard, type ReadyJson, type RopeJson, type SavedGame, type SnapshotJson,
 } from "../src/game/records";
 import { memoryStore, type KeyValueStore } from "../src/game/settings";
 
@@ -177,7 +177,7 @@ describe("saved games", () => {
 
   it("round-trip a game with its history", () => {
     const g = saved(generateBoard(1, 4).engine);
-    const back = decodeGame(roundTrip(encodeGame(g)))!;
+    const back = decodeGame(JSON.parse(encodeGame(g)))!;
     expect(back).toMatchObject({ ropes: 4, seed: 5, moves: 3, playedMs: 1000, undos: 2, redos: 1, startOvers: 1, replay: true });
     expect(back.undo.map((e) => e.moves)).toEqual([1, 2]);
     expect(back.redo.map((e) => e.moves)).toEqual([4]);
@@ -186,7 +186,7 @@ describe("saved games", () => {
   });
 
   it("keep version 1 with history added, so older builds still load the game", () => {
-    const json = encodeGame(saved(generateBoard(1, 4).engine));
+    const json: GameJson = JSON.parse(encodeGame(saved(generateBoard(1, 4).engine)));
     expect(json.v).toBe(1);
     expect(json.undo).toHaveLength(2);
   });
@@ -198,7 +198,7 @@ describe("saved games", () => {
   });
 
   it("round history coordinates but not the current state", () => {
-    const g = saved(generateBoard(1, 4).engine), json = encodeGame(g);
+    const g = saved(generateBoard(1, 4).engine), json: GameJson = JSON.parse(encodeGame(g));
     const pts = (j: SnapshotJson) => j.ropes.flatMap((r) => ("pts" in r ? r.pts : []));
     expect(pts(json.start!).every((c) => decimals(c) <= HISTORY_DECIMALS)).toBe(true);
     expect(pts(json.undo[0]!.snapshot).every((c) => decimals(c) <= HISTORY_DECIMALS)).toBe(true);
@@ -206,7 +206,7 @@ describe("saved games", () => {
   });
 
   it("keep the game when one history entry is unreadable", () => {
-    const json = { ...encodeGame(saved(generateBoard(1, 4).engine)) };
+    const json: GameJson = JSON.parse(encodeGame(saved(generateBoard(1, 4).engine)));
     const broken = { ...json, start: { cols: 1 }, undo: [{ moves: 1, snapshot: { cols: 1 } }, ...json.undo.slice(1)] };
     const back = decodeGame(roundTrip(broken))!;
     expect(back.undo.map((e) => e.moves)).toEqual([2]);
@@ -231,6 +231,6 @@ describe("saved games", () => {
   it("fit ten undo and ten redo states of a 10-rope board under the cap", () => {
     const E = game10(), s = toSnapshot(E);
     const g = saved(E, { undo: Array.from({ length: 10 }, (_, i) => entry(s, i)), redo: Array.from({ length: 10 }, (_, i) => entry(s, 20 - i)) });
-    expect(JSON.stringify(encodeGame(g)).length).toBeLessThan(1_000_000);
+    expect(encodeGame(g).length).toBeLessThan(1_000_000);
   }, 30_000);
 });
