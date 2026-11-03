@@ -1,9 +1,13 @@
-import { toSnapshot } from "../src/engine/snapshot";
+import type { Engine } from "../src/engine/engine";
+import { settle } from "../src/engine/settle";
+import { fromSnapshot, toSnapshot, type EngineSnapshot } from "../src/engine/snapshot";
+import type { HistoryEntry } from "../src/game/history";
+import { physicalLinking } from "../src/realize/compare";
 import { generateBoard } from "../src/generate/generate";
 import { GENERATOR_VERSION } from "../src/generate/version";
 import {
-  decodeReady, decodeSnapshot, encodeReady, encodeSnapshot, readRecord, removeRecord, storageKeys, writeRecord, type ReadyBoard, type ReadyJson,
-  type RopeJson,
+  decodeGame, decodeReady, decodeSnapshot, encodeGame, encodeReady, encodeSnapshot, HISTORY_DECIMALS, readRecord, removeRecord, storageKeys, writeRecord,
+  type ReadyBoard, type ReadyJson, type RopeJson, type SavedGame, type SnapshotJson,
 } from "../src/game/records";
 import { memoryStore, type KeyValueStore } from "../src/game/settings";
 
@@ -160,4 +164,73 @@ describe("record storage", () => {
     expect(readRecord(refusing, "k", (v) => decodeReady(v, 4))).toBeNull();
     expect(() => removeRecord(refusing, "k")).not.toThrow();
   });
+});
+
+describe("saved games", () => {
+  const game10 = () => generateBoard(5, 10).engine;
+  const entry = (snapshot: EngineSnapshot, moves: number): HistoryEntry => ({ snapshot, moves });
+  const saved = (E: Engine, extra: Partial<SavedGame> = {}): SavedGame => {
+    const s = toSnapshot(E);
+    return { ropes: E.ropes.length, seed: 5, moves: 3, playedMs: 1000, snapshot: s, start: s, undo: [entry(s, 1), entry(s, 2)], redo: [entry(s, 4)], undos: 2, redos: 1, startOvers: 1, replay: true, ...extra };
+  };
+  const decimals = (n: number) => (String(n).split(".")[1] ?? "").length;
+
+  it("round-trip a game with its history", () => {
+    const g = saved(generateBoard(1, 4).engine);
+    const back = decodeGame(roundTrip(encodeGame(g)))!;
+    expect(back).toMatchObject({ ropes: 4, seed: 5, moves: 3, playedMs: 1000, undos: 2, redos: 1, startOvers: 1, replay: true });
+    expect(back.undo.map((e) => e.moves)).toEqual([1, 2]);
+    expect(back.redo.map((e) => e.moves)).toEqual([4]);
+    expect(back.start).not.toBeNull();
+    expect(back.snapshot).toEqual(g.snapshot);
+  });
+
+  it("keep version 1 with history added, so older builds still load the game", () => {
+    const json = encodeGame(saved(generateBoard(1, 4).engine));
+    expect(json.v).toBe(1);
+    expect(json.undo).toHaveLength(2);
+  });
+
+  it("load a saved game written before undo history existed", () => {
+    const s = toSnapshot(generateBoard(1, 4).engine);
+    const v1 = roundTrip({ v: 1, ropes: 4, seed: 5, moves: 3, playedMs: 1000, snapshot: encodeSnapshot(s) });
+    expect(decodeGame(v1)).toEqual({ ropes: 4, seed: 5, moves: 3, playedMs: 1000, snapshot: s, start: null, undo: [], redo: [], undos: 0, redos: 0, startOvers: 0, replay: false });
+  });
+
+  it("round history coordinates but not the current state", () => {
+    const g = saved(generateBoard(1, 4).engine), json = encodeGame(g);
+    const pts = (j: SnapshotJson) => j.ropes.flatMap((r) => ("pts" in r ? r.pts : []));
+    expect(pts(json.start!).every((c) => decimals(c) <= HISTORY_DECIMALS)).toBe(true);
+    expect(pts(json.undo[0]!.snapshot).every((c) => decimals(c) <= HISTORY_DECIMALS)).toBe(true);
+    expect(pts(json.snapshot)).toEqual(pts(encodeSnapshot(g.snapshot)));
+  });
+
+  it("keep the game when one history entry is unreadable", () => {
+    const json = { ...encodeGame(saved(generateBoard(1, 4).engine)) };
+    const broken = { ...json, start: { cols: 1 }, undo: [{ moves: 1, snapshot: { cols: 1 } }, ...json.undo.slice(1)] };
+    const back = decodeGame(roundTrip(broken))!;
+    expect(back.undo.map((e) => e.moves)).toEqual([2]);
+    expect(back.start).toBeNull();
+  });
+
+  it("restore a rounded 10-rope board to the same tangle", () => {
+    const E = game10();
+    const F = fromSnapshot(decodeSnapshot(roundTrip(encodeSnapshot(toSnapshot(E), HISTORY_DECIMALS)), 10)!);
+    settle(E);
+    settle(F);
+    const a = E.signature(), b = F.signature();
+    for (let i = 0; i < 10; i++) for (let j = i + 1; j < 10; j++) expect(physicalLinking(b, i, j)).toBe(physicalLinking(a, i, j));
+    let max = 0;
+    E.ropes.forEach((r, i) => r.pts.forEach((p, k) => {
+      const q = F.ropes[i]!.pts[k]!;
+      max = Math.max(max, Math.hypot(p.x - q.x, p.y - q.y));
+    }));
+    expect(max).toBeLessThan(0.5);
+  }, 30_000);
+
+  it("fit ten undo and ten redo states of a 10-rope board under the cap", () => {
+    const E = game10(), s = toSnapshot(E);
+    const g = saved(E, { undo: Array.from({ length: 10 }, (_, i) => entry(s, i)), redo: Array.from({ length: 10 }, (_, i) => entry(s, 20 - i)) });
+    expect(JSON.stringify(encodeGame(g)).length).toBeLessThan(1_000_000);
+  }, 30_000);
 });

@@ -256,7 +256,7 @@ describe("restoring a game", () => {
 
   it("rejects a saved game with nothing left to solve", () => {
     const ropes: RopeSnapshot[] = [0, 1, 2, 3].map(() => ({ cleared: true }));
-    const g = { ropes: 4, seed: 9, moves: 3, playedMs: 1, snapshot: { cols: 4, rows: 5, ropes } };
+    const g = { ropes: 4, seed: 9, moves: 3, playedMs: 1, snapshot: { cols: 4, rows: 5, ropes }, start: null, undo: [], redo: [], undos: 0, redos: 0, startOvers: 0, replay: false };
     expect(decodeGame(JSON.parse(JSON.stringify(encodeGame(g))))).toBeNull();
   });
 });
