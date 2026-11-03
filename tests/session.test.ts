@@ -170,7 +170,7 @@ describe("session undo, redo and start over", () => {
     expect(s.grab({ x: 192, y: 0 })).toBe(true);
     expect(s.undo()).toBe(false);
     expect(s.redo()).toBe(false);
-    expect(s.startOver()).toBe(false);
+    expect(s.startOver()).toBeNull();
     expect(s.canUndo()).toBe(false);
     expect(s.canStartOver()).toBe(false);
     expect(s.moves).toBe(1);
@@ -249,7 +249,7 @@ describe("session undo, redo and start over", () => {
     runUntilIdle(s);
     move(s, { x: 128, y: 256 }, { x: 64, y: 256 });
     runUntilIdle(s);
-    expect(s.startOver()).toBe(true);
+    expect(s.startOver()).toBe("start-over");
     expect(s.moves).toBe(0);
     expect(s.history.undo).toEqual([]);
     expect(s.history.redo).toEqual([]);
@@ -263,7 +263,7 @@ describe("session undo, redo and start over", () => {
     move(s, { x: 192, y: 256 }, { x: 64, y: 0 });
     runUntilIdle(s);
     expect(s.canStartOver()).toBe(true);
-    expect(s.startOver()).toBe(true);
+    expect(s.startOver()).toBe("try-again");
     expect(s.won).toBe(false);
     expect(s.replay).toBe(true);
     expect(s.startOvers).toBe(0);
@@ -274,7 +274,7 @@ describe("session undo, redo and start over", () => {
   it("cannot start over without a start state", () => {
     const s = new Session(easyBoard(), new History(null));
     expect(s.canStartOver()).toBe(false);
-    expect(s.startOver()).toBe(false);
+    expect(s.startOver()).toBeNull();
   });
 
   it("refuses a second undo when only one entry remains", () => {

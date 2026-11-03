@@ -86,8 +86,8 @@ describe("track", () => {
   it("hands events to the Umami tracker when it has loaded", () => {
     const r = recorder();
     vi.stubGlobal("window", { umami: r.umami });
-    track("puzzle-completed", { ropes: 5, moves: 7, elapsedMs: 1000 });
-    expect(r.sent).toEqual([["puzzle-completed", { ropes: 5, moves: 7, elapsedMs: 1000 }]]);
+    track("puzzle-completed", { ropes: 5, moves: 7, elapsedMs: 1000, undos: 0, redos: 0, startOvers: 0, replay: false });
+    expect(r.sent).toEqual([["puzzle-completed", { ropes: 5, moves: 7, elapsedMs: 1000, undos: 0, redos: 0, startOvers: 0, replay: false }]]);
   });
 
   it("drops events quietly when no tracker is configured", () => {
@@ -104,7 +104,7 @@ describe("track", () => {
     t.track("back-guard-caught", {});
     umami = r.umami;
     t.flush();
-    t.track("puzzle-completed", { ropes: 4, moves: 3, elapsedMs: 5000 });
+    t.track("puzzle-completed", { ropes: 4, moves: 3, elapsedMs: 5000, undos: 0, redos: 0, startOvers: 0, replay: false });
     expect(r.sent.map((e) => (Array.isArray(e) ? e[0] : e))).toEqual(["new-game-started", "back-guard-caught", "puzzle-completed"]);
   });
 

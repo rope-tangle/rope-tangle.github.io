@@ -57,6 +57,22 @@ const captureEvents = (page: Page) =>
 
 const savedMoves = (page: Page) => page.evaluate(() => JSON.parse(localStorage.getItem("rope-tangle/game") ?? "{}").moves);
 
+const holesUnder = async (page: Page, ids: string[]) => {
+  const boxes = await Promise.all(ids.map(async (id) => (await page.locator(id).boundingBox())!));
+  const holes = await page.evaluate(() => {
+    const t = window.ropeTangleTest!, out = [];
+    for (let i = 0; ; i++) {
+      try {
+        out.push(t.holeToClient(i));
+      } catch {
+        return out;
+      }
+    }
+  });
+  expect(holes.length).toBeGreaterThan(20);
+  return holes.filter((h) => boxes.some((b) => h.x >= b.x && h.x <= b.x + b.width && h.y >= b.y && h.y <= b.y + b.height)).length;
+};
+
 const buildCookie = (value: string) => ({ name: "build", value, url: test.info().project.use.baseURL! });
 
 test.describe("easy board", () => {
@@ -105,6 +121,68 @@ test.describe("easy board", () => {
   test("solves the board and shows the win overlay", async ({ page }) => {
     await drag(page, await at(page, 192, 256), await at(page, 64, 0));
     await expect(page.locator("#overlay")).toContainText("Solved · 1 move", { timeout: 30_000 });
+  });
+
+  test("undoes and redoes a move", async ({ page }) => {
+    await drag(page, await at(page, 192, 256), await at(page, 128, 256));
+    await idle(page);
+    await page.locator("#undo").click();
+    let s = await state(page);
+    expect(s.moves).toBe(0);
+    expect(s.ends[0]![1]).toBe(await holeAt(page, 192, 256));
+    await page.locator("#redo").click();
+    s = await state(page);
+    expect(s.moves).toBe(1);
+    expect(s.ends[0]![1]).toBe(await holeAt(page, 128, 256));
+    await expect(page.locator("#redo")).toBeDisabled();
+  });
+
+  test("centers the undo and redo icons in their buttons", async ({ page }) => {
+    for (const id of ["#undo", "#redo"]) {
+      const button = (await page.locator(id).boundingBox())!, icon = (await page.locator(`${id} svg`).boundingBox())!;
+      expect(Math.abs(icon.x + icon.width / 2 - (button.x + button.width / 2))).toBeLessThan(1);
+      expect(Math.abs(icon.y + icon.height / 2 - (button.y + button.height / 2))).toBeLessThan(1);
+    }
+  });
+
+  test("keeps undo and redo disabled with nothing to step to", async ({ page }) => {
+    await expect(page.locator("#undo")).toBeDisabled();
+    await expect(page.locator("#redo")).toBeDisabled();
+  });
+
+  test("starts over after confirming", async ({ page }) => {
+    await drag(page, await at(page, 192, 256), await at(page, 128, 256));
+    await idle(page);
+    await page.locator("#start-over").click();
+    await expect(page.locator("#confirm-start-over")).toBeVisible();
+    await page.locator("#confirm-start-over-no").click();
+    await expect(page.locator("#confirm-start-over")).toBeHidden();
+    expect((await state(page)).moves).toBe(1);
+    await page.locator("#start-over").click();
+    await page.locator("#confirm-start-over-yes").click();
+    await expect(page.locator("#confirm-start-over")).toBeHidden();
+    expect((await state(page)).moves).toBe(0);
+    await expect(page.locator("#undo")).toBeDisabled();
+  });
+
+  test("tries the solved board again", async ({ page }) => {
+    await drag(page, await at(page, 192, 256), await at(page, 64, 0));
+    await expect(page.getByRole("button", { name: "Next" })).toBeVisible({ timeout: 30_000 });
+    await page.getByRole("button", { name: "Try again" }).click();
+    await expect(page.locator("#overlay")).toBeHidden();
+    const s = await state(page);
+    expect(s.active).toBe(2);
+    expect(s.moves).toBe(0);
+    expect(s.won).toBe(false);
+  });
+
+  test("starts over a solved board without asking", async ({ page }) => {
+    await drag(page, await at(page, 192, 256), await at(page, 64, 0));
+    await expect(page.locator("#overlay")).toContainText("Solved", { timeout: 30_000 });
+    await page.locator("#start-over").click();
+    await expect(page.locator("#confirm-start-over")).toBeHidden();
+    await expect(page.locator("#overlay")).toBeHidden();
+    expect((await state(page)).active).toBe(2);
   });
 
   test("stops drawing while nothing moves and resumes on a drag", async ({ page }) => {
@@ -177,6 +255,32 @@ test.describe("bundled boards", () => {
 });
 
 test.describe("saved games", () => {
+  test("keeps undo history and the start over a reload", async ({ page }) => {
+    await page.goto("?test=1&ropes=4");
+    await loaded(page);
+    const start = (await state(page)).ends;
+    await moveOneEnd(page);
+    await moveOneEnd(page);
+    await page.reload();
+    await loaded(page);
+    await idle(page);
+    await page.locator("#undo").click();
+    await idle(page);
+    await page.locator("#undo").click();
+    expect((await state(page)).moves).toBe(0);
+    await expect(page.locator("#undo")).toBeDisabled();
+    await moveOneEnd(page);
+    await page.locator("#start-over").click();
+    await page.locator("#confirm-start-over-yes").click();
+    expect((await state(page)).ends).toEqual(start);
+    await page.reload();
+    await loaded(page);
+    const s = await state(page);
+    expect(s.moves).toBe(0);
+    expect(s.ends).toEqual(start);
+    await expect(page.locator("#undo")).toBeDisabled();
+  });
+
   test.use({ serviceWorkers: "block" });
 
   test("resumes the game after a reload", async ({ page }) => {
@@ -352,6 +456,36 @@ test.describe("offline", () => {
 });
 
 test.describe("generated boards", () => {
+
+  test("keeps the floating buttons clear of the holes on a short, wide screen", async ({ page }) => {
+    await page.setViewportSize({ width: 900, height: 420 });
+    await page.goto("?test=1&ropes=10");
+    await loaded(page);
+    expect(await holesUnder(page, ["#undo", "#redo"])).toBe(0);
+  });
+
+  test("fits the board to the full height when the floating buttons are hidden", async ({ page }) => {
+    await page.goto("?test=1&ropes=10");
+    await loaded(page);
+    await page.addStyleTag({ content: ".fab { display: none !important; }" });
+    await page.evaluate(() => window.dispatchEvent(new Event("resize")));
+    const box = (await page.locator("#board").boundingBox())!;
+    const first = await page.evaluate(() => window.ropeTangleTest!.holeToClient(0));
+    expect(first.x).toBeGreaterThan(box.x);
+    expect(first.x).toBeLessThan(box.x + box.width);
+    expect(first.y).toBeGreaterThan(box.y);
+    expect(first.y).toBeLessThan(box.y + box.height);
+  });
+
+  test("makes room for the floating buttons at whatever size they are drawn", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 640 });
+    await page.goto("?test=1&ropes=10");
+    await loaded(page);
+    await page.addStyleTag({ content: ".fab { width: 160px; height: 160px; bottom: 30px; }" });
+    await page.evaluate(() => window.dispatchEvent(new Event("resize")));
+    expect(await holesUnder(page, ["#undo", "#redo"])).toBe(0);
+  });
+
   test("shows the board for the last rope count chosen", async ({ page }) => {
     await page.goto("?test=1&ropes=5");
     await loaded(page);
@@ -474,6 +608,28 @@ test.describe("analytics", () => {
     await captureEvents(page);
   });
 
+  test("reports undos, start overs and replays", async ({ page }) => {
+    await page.goto("?test=1&board=easy");
+    await loaded(page);
+    await drag(page, await at(page, 192, 256), await at(page, 128, 256));
+    await idle(page);
+    await page.locator("#undo").click();
+    await page.locator("#redo").click();
+    await idle(page);
+    await page.locator("#start-over").click();
+    await page.locator("#confirm-start-over-yes").click();
+    expect(await named(page, "game-restarted")).toEqual([{ ropes: 2, moves: 1, ropesLeft: 2, via: "start-over" }]);
+    await drag(page, await at(page, 192, 256), await at(page, 64, 0));
+    await expect(page.locator("#overlay")).toContainText("Solved", { timeout: 30_000 });
+    expect(await named(page, "puzzle-completed")).toEqual([{ ropes: 2, moves: 1, elapsedMs: expect.any(Number), undos: 1, redos: 1, startOvers: 1, replay: false }]);
+    await page.getByRole("button", { name: "Try again" }).click();
+    expect((await named(page, "game-restarted"))[1]).toEqual({ ropes: 2, moves: 1, ropesLeft: 0, via: "try-again" });
+    await expect(page.locator("#overlay")).toBeHidden();
+    await drag(page, await at(page, 192, 256), await at(page, 64, 0));
+    await expect.poll(async () => (await named(page, "puzzle-completed")).length, { timeout: 30_000 }).toBe(2);
+    expect((await named(page, "puzzle-completed"))[1]).toMatchObject({ moves: 1, startOvers: 1, replay: true });
+  });
+
   test("reports a started game, its solution and the game that replaces it", async ({ page }) => {
     await page.goto("?test=1&board=easy");
     await loaded(page);
@@ -482,8 +638,8 @@ test.describe("analytics", () => {
     ]);
     await drag(page, await at(page, 192, 256), await at(page, 64, 0));
     await expect(page.locator("#overlay")).toContainText("Solved", { timeout: 30_000 });
-    expect(await named(page, "puzzle-completed")).toEqual([{ ropes: 2, moves: 1, elapsedMs: expect.any(Number) }]);
-    await page.locator("#overlay button").click();
+    expect(await named(page, "puzzle-completed")).toEqual([{ ropes: 2, moves: 1, elapsedMs: expect.any(Number), undos: 0, redos: 0, startOvers: 0, replay: false }]);
+    await page.getByRole("button", { name: "Next" }).click();
     await loaded(page);
     const next = (await named(page, "new-game-started"))[1];
     expect(next).toMatchObject({ trigger: "next", replacedSolved: true, replacedMoves: 1, replacedRopesLeft: 0 });

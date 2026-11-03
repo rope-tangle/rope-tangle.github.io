@@ -81,6 +81,12 @@ export function startApp(doc: Document, win: Window): App {
   if (!ctx) throw new Error("no 2d context");
   const ropesSelect = element(doc, "ropes", HTMLSelectElement);
   const newButton = element(doc, "new", HTMLButtonElement);
+  const startOverButton = element(doc, "start-over", HTMLButtonElement);
+  const undoButton = element(doc, "undo", HTMLButtonElement);
+  const redoButton = element(doc, "redo", HTMLButtonElement);
+  const confirmStartOver = element(doc, "confirm-start-over", HTMLDialogElement);
+  const confirmYes = element(doc, "confirm-start-over-yes", HTMLButtonElement);
+  const confirmNo = element(doc, "confirm-start-over-no", HTMLButtonElement);
   const movesLabel = element(doc, "moves", HTMLSpanElement);
   const overlay = element(doc, "overlay", HTMLDivElement);
   const toast = element(doc, "toast", HTMLDivElement);
@@ -128,7 +134,7 @@ export function startApp(doc: Document, win: Window): App {
   let view: View = { s: 1, ox: 0, oy: 0 };
   let dpr = 1, loadToken = 0, renderMs = 0, budgetMs = 8, winShown = false, dirty = true, movesText = "";
   let activePointer: number | null = null;
-  let gameRopes = 0, gameStartedAt = 0;
+  let gameRopes = 0, gameSeed = 0, gameStartedAt = 0;
   let replaced: ReplacedGameData = {};
 
   const layout = () => {
@@ -138,7 +144,8 @@ export function startApp(doc: Document, win: Window): App {
     canvas.height = Math.round(h * dpr);
     canvas.style.width = `${w}px`;
     canvas.style.height = `${h}px`;
-    if (session) view = fitView(session.engine.board, w, h, SIDE_GAP);
+    const fab = undoButton.getBoundingClientRect(), fabReserve = fab.height > 0 ? fab.height + 2 * (win.innerHeight - fab.bottom) : 0;
+    if (session) view = fitView(session.engine.board, w, h - fabReserve, SIDE_GAP);
     dirty = true;
   };
 
@@ -147,15 +154,29 @@ export function startApp(doc: Document, win: Window): App {
     if (text !== movesText) movesLabel.textContent = movesText = text;
   };
 
-  const showOverlay = (text: string, button?: { label: string; action: () => void }) => {
+  const updateButtons = () => {
+    const set = (b: HTMLButtonElement, enabled: boolean) => {
+      if (b.disabled === enabled) b.disabled = !enabled;
+    };
+    set(undoButton, session?.canUndo() ?? false);
+    set(redoButton, session?.canRedo() ?? false);
+    set(startOverButton, session?.canStartOver() ?? false);
+  };
+
+  const showOverlay = (text: string, buttons: { label: string; action: () => void }[] = []) => {
     const line = doc.createElement("div");
     line.textContent = text;
     overlay.replaceChildren(line);
-    if (button) {
-      const b = doc.createElement("button");
-      b.textContent = button.label;
-      b.addEventListener("click", button.action);
-      overlay.append(b);
+    if (buttons.length > 0) {
+      const row = doc.createElement("div");
+      row.className = "row";
+      for (const button of buttons) {
+        const b = doc.createElement("button");
+        b.textContent = button.label;
+        b.addEventListener("click", button.action);
+        row.append(b);
+      }
+      overlay.append(row);
     }
     overlay.hidden = false;
   };
@@ -163,6 +184,7 @@ export function startApp(doc: Document, win: Window): App {
   const begin = (b: LoadedBoard) => {
     session = new Session(b.engine);
     gameRopes = b.ropes;
+    gameSeed = b.seed;
     gameStartedAt = played.now();
     if (!easy) saver.started({ session, ropes: b.ropes, seed: b.seed, startedAt: gameStartedAt });
     colors = shuffledColors(b.seed);
@@ -181,6 +203,7 @@ export function startApp(doc: Document, win: Window): App {
     saver.forget();
     session = null;
     updateMoves();
+    updateButtons();
     showOverlay("Scrambling…");
     const started = (b: LoadedBoard) => {
       begin(b);
@@ -209,7 +232,7 @@ export function startApp(doc: Document, win: Window): App {
       (e: unknown) => {
         if (token !== loadToken) return;
         track("new-game-failed", { ropes, trigger, reason: e instanceof BoardFailure ? e.kind : "error", detail: sanitizeReason(e), ...replaced });
-        showOverlay(e instanceof Error ? e.message : "No board", { label: "Try again", action: () => load("retry") });
+        showOverlay(e instanceof Error ? e.message : "No board", [{ label: "Try again", action: () => load("retry") }]);
       },
     );
   };
@@ -261,6 +284,39 @@ export function startApp(doc: Document, win: Window): App {
     load("rope-count");
   });
   newButton.addEventListener("click", () => load("new"));
+
+  const restart = () => {
+    const s = session;
+    if (!s) return;
+    const moves = s.moves, ropesLeft = s.engine.active().length, via = s.startOver();
+    if (!via) return;
+    track("game-restarted", { ropes: gameRopes, moves, ropesLeft, via });
+    gameStartedAt = played.now();
+    winShown = false;
+    overlay.hidden = true;
+    dirty = true;
+    if (!easy) saver.started({ session: s, ropes: gameRopes, seed: gameSeed, startedAt: gameStartedAt });
+    updateMoves();
+    updateButtons();
+  };
+  const stepHistory = (go: (s: Session) => boolean) => {
+    if (!session || reload.closed || !go(session)) return;
+    dirty = true;
+    updateMoves();
+    updateButtons();
+  };
+  undoButton.addEventListener("click", () => stepHistory((s) => s.undo()));
+  redoButton.addEventListener("click", () => stepHistory((s) => s.redo()));
+  startOverButton.addEventListener("click", () => {
+    if (!session || reload.closed) return;
+    if (session.won) restart();
+    else confirmStartOver.showModal();
+  });
+  confirmYes.addEventListener("click", () => {
+    confirmStartOver.close();
+    restart();
+  });
+  confirmNo.addEventListener("click", () => confirmStartOver.close());
   showMoves.checked = settings.showMoves;
   showMoves.addEventListener("change", () => {
     settings.showMoves = showMoves.checked;
@@ -301,11 +357,21 @@ export function startApp(doc: Document, win: Window): App {
         budgetMs = Math.max(4, Math.min(11, 14 - renderMs));
       }
       updateMoves();
+      updateButtons();
       if (s.won && !winShown) {
         winShown = true;
         const n = s.moves;
-        track("puzzle-completed", { ropes: gameRopes, moves: n, elapsedMs: Math.round(played.now() - gameStartedAt) });
-        showOverlay(settings.showMoves ? `Solved · ${n} ${n === 1 ? "move" : "moves"}` : "✓", { label: "Next", action: () => load("next") });
+        track("puzzle-completed", {
+          ropes: gameRopes,
+          moves: n,
+          elapsedMs: Math.round(played.now() - gameStartedAt),
+          undos: s.undos,
+          redos: s.redos,
+          startOvers: s.startOvers,
+          replay: s.replay,
+        });
+        const next = { label: "Next", action: () => load("next") };
+        showOverlay(settings.showMoves ? `Solved · ${n} ${n === 1 ? "move" : "moves"}` : "✓", s.canStartOver() ? [{ label: "Try again", action: restart }, next] : [next]);
       }
     }
     reload.check();
@@ -361,6 +427,7 @@ export function startApp(doc: Document, win: Window): App {
     const { session: resumed, startedAt } = restoreGame(saved, played.now());
     session = resumed;
     gameRopes = saved.ropes;
+    gameSeed = saved.seed;
     gameStartedAt = startedAt;
     colors = shuffledColors(saved.seed);
     settings.ropes = saved.ropes;
