@@ -2,10 +2,12 @@ import { boardForRopes, PITCH, ROPE_COUNTS } from "../board";
 import { BLOCKER_H } from "../engine/constants";
 import type { EngineSnapshot, RopeSnapshot } from "../engine/snapshot";
 import { GENERATOR_VERSION } from "../generate/version";
+import type { HistoryEntry } from "./history";
 import type { KeyValueStore } from "./settings";
 
 export const RECORD_VERSION = 1;
 export const GAME_VERSION = 1;
+export const HISTORY_DECIMALS = 2;
 
 export interface StorageKeys {
   game: string;
@@ -52,11 +54,13 @@ const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const isInt = (v: unknown): v is number => Number.isInteger(v);
 
-export function encodeSnapshot(s: EngineSnapshot): SnapshotJson {
+export function encodeSnapshot(s: EngineSnapshot, decimals?: number): SnapshotJson {
+  const f = decimals === undefined ? null : 10 ** decimals;
+  const pts = (a: Float64Array): number[] => (f === null ? Array.from(a) : Array.from(a, (c) => Math.round(c * f) / f));
   return {
     cols: s.cols,
     rows: s.rows,
-    ropes: s.ropes.map((r): RopeJson => ("cleared" in r ? { cleared: true } : { pts: Array.from(r.pts), ends: [r.ends[0], r.ends[1]] })),
+    ropes: s.ropes.map((r): RopeJson => ("cleared" in r ? { cleared: true } : { pts: pts(r.pts), ends: [r.ends[0], r.ends[1]] })),
   };
 }
 
@@ -147,8 +151,12 @@ export function readRecord<T>(
 }
 
 export function writeRecord(store: KeyValueStore, key: string, value: unknown): boolean {
+  return writeText(store, key, JSON.stringify(value));
+}
+
+export function writeText(store: KeyValueStore, key: string, text: string): boolean {
   try {
-    store.setItem(key, JSON.stringify(value));
+    store.setItem(key, text);
     return true;
   } catch {
     return false;
@@ -161,6 +169,18 @@ export interface SavedGame {
   moves: number;
   playedMs: number;
   snapshot: EngineSnapshot;
+  start: EngineSnapshot | null;
+  undo: HistoryEntry[];
+  redo: HistoryEntry[];
+  undos: number;
+  redos: number;
+  startOvers: number;
+  replay: boolean;
+}
+
+export interface HistoryEntryJson {
+  moves: number;
+  snapshot: SnapshotJson;
 }
 
 export interface GameJson {
@@ -170,10 +190,48 @@ export interface GameJson {
   moves: number;
   playedMs: number;
   snapshot: SnapshotJson;
+  start: SnapshotJson | null;
+  undo: HistoryEntryJson[];
+  redo: HistoryEntryJson[];
+  undos: number;
+  redos: number;
+  startOvers: number;
+  replay: boolean;
+}
+
+export function encodeEntry(e: HistoryEntry): HistoryEntryJson {
+  return { moves: e.moves, snapshot: encodeSnapshot(e.snapshot, HISTORY_DECIMALS) };
 }
 
 export function encodeGame(g: SavedGame): GameJson {
-  return { v: GAME_VERSION, ropes: g.ropes, seed: g.seed, moves: g.moves, playedMs: g.playedMs, snapshot: encodeSnapshot(g.snapshot) };
+  return {
+    v: GAME_VERSION,
+    ropes: g.ropes,
+    seed: g.seed,
+    moves: g.moves,
+    playedMs: g.playedMs,
+    snapshot: encodeSnapshot(g.snapshot),
+    start: g.start && encodeSnapshot(g.start, HISTORY_DECIMALS),
+    undo: g.undo.map(encodeEntry),
+    redo: g.redo.map(encodeEntry),
+    undos: g.undos,
+    redos: g.redos,
+    startOvers: g.startOvers,
+    replay: g.replay,
+  };
+}
+
+const count = (v: unknown): number => (isInt(v) && v >= 0 ? v : 0);
+
+function decodeEntries(v: unknown, ropes: number): HistoryEntry[] {
+  if (!Array.isArray(v)) return [];
+  const out: HistoryEntry[] = [];
+  for (const e of v) {
+    if (!isObj(e) || !isInt(e["moves"]) || e["moves"] < 0) continue;
+    const snapshot = decodeSnapshot(e["snapshot"], ropes);
+    if (snapshot) out.push({ moves: e["moves"], snapshot });
+  }
+  return out;
 }
 
 export function decodeGame(v: unknown): SavedGame | null {
@@ -182,5 +240,18 @@ export function decodeGame(v: unknown): SavedGame | null {
   if (!isInt(ropes) || !isInt(seed) || !isInt(moves) || moves < 0 || !isNum(playedMs) || playedMs < 0) return null;
   const snapshot = decodeSnapshot(v["snapshot"], ropes);
   if (!snapshot || snapshot.ropes.every((r) => "cleared" in r)) return null;
-  return { ropes, seed, moves, playedMs, snapshot };
+  return {
+    ropes,
+    seed,
+    moves,
+    playedMs,
+    snapshot,
+    start: decodeSnapshot(v["start"], ropes),
+    undo: decodeEntries(v["undo"], ropes),
+    redo: decodeEntries(v["redo"], ropes),
+    undos: count(v["undos"]),
+    redos: count(v["redos"]),
+    startOvers: count(v["startOvers"]),
+    replay: v["replay"] === true,
+  };
 }

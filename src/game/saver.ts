@@ -77,6 +77,13 @@ export class GameSaver {
       moves: s.moves,
       playedMs: Math.round(this.now() - g.startedAt),
       snapshot: toSnapshot(s.engine),
+      start: s.history.start,
+      undo: [],
+      redo: [],
+      undos: s.undos,
+      redos: s.redos,
+      startOvers: s.startOvers,
+      replay: s.replay,
     }));
   }
 }
