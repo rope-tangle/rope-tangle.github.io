@@ -1,5 +1,8 @@
 import { fromSnapshot, toSnapshot } from "../engine/snapshot";
-import { decodeGame, encodeGame, GAME_VERSION, readRecord, removeRecord, writeRecord, type DiscardReason, type SavedGame } from "./records";
+import { History } from "./history";
+import {
+  decodeGame, encodeEntryText, encodeGameBase, encodeStartText, GAME_VERSION, gameText, readRecord, removeRecord, writeText, type DiscardReason, type SavedGame,
+} from "./records";
 import { Session } from "./session";
 import type { KeyValueStore } from "./settings";
 
@@ -10,18 +13,25 @@ export interface CurrentGame {
   startedAt: number;
 }
 
+export const SAVED_UNDO = 10;
+export const SAVED_REDO = 10;
+export const GAME_CHAR_CAP = 1_000_000;
+
 export class GameSaver {
   private game: CurrentGame | null = null;
   private lastRevision = 0;
   private savedMidSettle = false;
+  private texts = new Map<object, string>();
   private readonly store: KeyValueStore;
   private readonly key: string;
   private readonly now: () => number;
+  private readonly charCap: number;
 
-  constructor(store: KeyValueStore, key: string, now: () => number) {
+  constructor(store: KeyValueStore, key: string, now: () => number, charCap = GAME_CHAR_CAP) {
     this.store = store;
     this.key = key;
     this.now = now;
+    this.charCap = charCap;
   }
 
   load(onDiscard?: (reason: DiscardReason) => void): SavedGame | null {
@@ -71,26 +81,42 @@ export class GameSaver {
     const s = g.session;
     this.lastRevision = s.revision;
     this.savedMidSettle = s.phase !== "idle";
-    writeRecord(this.store, this.key, encodeGame({
+    const base = encodeGameBase({
       ropes: g.ropes,
       seed: g.seed,
       moves: s.moves,
       playedMs: Math.round(this.now() - g.startedAt),
       snapshot: toSnapshot(s.engine),
-      start: s.history.start,
-      undo: [],
-      redo: [],
       undos: s.undos,
       redos: s.redos,
       startOvers: s.startOvers,
       replay: s.replay,
-    }));
+    });
+    const texts = new Map<object, string>();
+    const cached = (key: object, encode: () => string): string => {
+      const t = this.texts.get(key) ?? encode();
+      texts.set(key, t);
+      return t;
+    };
+    const start = s.history.start;
+    const startText = start && cached(start, () => encodeStartText(start));
+    const undo = s.history.undo.slice(-SAVED_UNDO).map((e) => cached(e, () => encodeEntryText(e)));
+    const redo = s.history.redo.slice(-SAVED_REDO).map((e) => cached(e, () => encodeEntryText(e)));
+    this.texts = texts;
+    const drop = () => (redo.length > 0 ? redo.shift() : undo.shift()) !== undefined;
+    let text = gameText(base, startText, undo, redo);
+    while (text.length > this.charCap && drop()) text = gameText(base, startText, undo, redo);
+    while (!writeText(this.store, this.key, text) && drop()) text = gameText(base, startText, undo, redo);
   }
 }
 
 export function restoreGame(saved: SavedGame, now: number): { session: Session; startedAt: number } {
-  const session = new Session(fromSnapshot(saved.snapshot));
+  const session = new Session(fromSnapshot(saved.snapshot), new History(saved.start, saved.undo, saved.redo));
   session.moves = saved.moves;
+  session.undos = saved.undos;
+  session.redos = saved.redos;
+  session.startOvers = saved.startOvers;
+  session.replay = saved.replay;
   session.settle();
   return { session, startedAt: now - saved.playedMs };
 }

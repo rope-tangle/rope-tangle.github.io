@@ -199,11 +199,10 @@ export interface GameJson {
   replay: boolean;
 }
 
-export function encodeEntry(e: HistoryEntry): HistoryEntryJson {
-  return { moves: e.moves, snapshot: encodeSnapshot(e.snapshot, HISTORY_DECIMALS) };
-}
+export type GameBase = Omit<SavedGame, "start" | "undo" | "redo">;
+export type GameBaseJson = Omit<GameJson, "start" | "undo" | "redo">;
 
-export function encodeGame(g: SavedGame): GameJson {
+export function encodeGameBase(g: GameBase): GameBaseJson {
   return {
     v: GAME_VERSION,
     ropes: g.ropes,
@@ -211,14 +210,27 @@ export function encodeGame(g: SavedGame): GameJson {
     moves: g.moves,
     playedMs: g.playedMs,
     snapshot: encodeSnapshot(g.snapshot),
-    start: g.start && encodeSnapshot(g.start, HISTORY_DECIMALS),
-    undo: g.undo.map(encodeEntry),
-    redo: g.redo.map(encodeEntry),
     undos: g.undos,
     redos: g.redos,
     startOvers: g.startOvers,
     replay: g.replay,
   };
+}
+
+export function encodeStartText(start: EngineSnapshot): string {
+  return JSON.stringify(encodeSnapshot(start, HISTORY_DECIMALS));
+}
+
+export function encodeEntryText(e: HistoryEntry): string {
+  return JSON.stringify({ moves: e.moves, snapshot: encodeSnapshot(e.snapshot, HISTORY_DECIMALS) } satisfies HistoryEntryJson);
+}
+
+export function gameText(base: GameBaseJson, start: string | null, undo: readonly string[], redo: readonly string[]): string {
+  return `${JSON.stringify(base).slice(0, -1)},"start":${start ?? "null"},"undo":[${undo.join(",")}],"redo":[${redo.join(",")}]}`;
+}
+
+export function encodeGame(g: SavedGame): string {
+  return gameText(encodeGameBase(g), g.start && encodeStartText(g.start), g.undo.map(encodeEntryText), g.redo.map(encodeEntryText));
 }
 
 const count = (v: unknown): number => (isInt(v) && v >= 0 ? v : 0);

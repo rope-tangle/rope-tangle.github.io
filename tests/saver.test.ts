@@ -1,7 +1,7 @@
 import type { RopeSnapshot } from "../src/engine/snapshot";
 import { easyBoard } from "../src/game/easy";
 import { generateBoard } from "../src/generate/generate";
-import { decodeGame, encodeGame, GAME_VERSION, storageKeys } from "../src/game/records";
+import { decodeGame, encodeEntryText, encodeGame, encodeSnapshot, GAME_VERSION, storageKeys } from "../src/game/records";
 import { GameSaver, restoreGame } from "../src/game/saver";
 import { Session } from "../src/game/session";
 import { memoryStore, type KeyValueStore } from "../src/game/settings";
@@ -257,6 +257,131 @@ describe("restoring a game", () => {
   it("rejects a saved game with nothing left to solve", () => {
     const ropes: RopeSnapshot[] = [0, 1, 2, 3].map(() => ({ cleared: true }));
     const g = { ropes: 4, seed: 9, moves: 3, playedMs: 1, snapshot: { cols: 4, rows: 5, ropes }, start: null, undo: [], redo: [], undos: 0, redos: 0, startOvers: 0, replay: false };
-    expect(decodeGame(JSON.parse(JSON.stringify(encodeGame(g))))).toBeNull();
+    expect(decodeGame(JSON.parse(encodeGame(g)))).toBeNull();
+  });
+});
+
+describe("game saver history", () => {
+  const undoMoves = (saver: GameSaver) => saver.load()!.undo.map((e) => e.moves);
+  const redoMoves = (saver: GameSaver) => saver.load()!.redo.map((e) => e.moves);
+  const playMoves = (s: Session, saver: GameSaver, n: number) => {
+    for (let i = 0; i < n; i++) {
+      moveEnd(s, 0);
+      runUntilLanded(s, saver);
+    }
+  };
+  const undoTimes = (s: Session, saver: GameSaver, n: number) => {
+    for (let i = 0; i < n; i++) {
+      expect(s.undo()).toBe(true);
+      saver.tick();
+    }
+  };
+
+  it("saves at most ten undo states", () => {
+    const { session, saver } = setup();
+    playMoves(session, saver, 12);
+    expect(session.history.undo).toHaveLength(12);
+    expect(undoMoves(saver)).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    expect(saver.load()!.start).not.toBeNull();
+  });
+
+  it("saves at most ten redo states, the ones nearest the current move", () => {
+    const { session, saver } = setup();
+    playMoves(session, saver, 12);
+    undoTimes(session, saver, 11);
+    expect(undoMoves(saver)).toEqual([0]);
+    expect(redoMoves(saver)).toEqual([11, 10, 9, 8, 7, 6, 5, 4, 3, 2]);
+  });
+
+  it("drops the redo state furthest ahead first, then the oldest undo state, when the store is full", () => {
+    let limit = Infinity;
+    const inner = memoryStore();
+    const store: KeyValueStore = { ...inner, setItem: (k, v) => {
+      if (v.length > limit) throw new Error("quota");
+      inner.setItem(k, v);
+    } };
+    const session = new Session(generateBoard(9, 4).engine), saver = new GameSaver(store, KEY, () => 0);
+    saver.started({ session, ropes: 4, seed: 9, startedAt: 0 });
+    playMoves(session, saver, 3);
+    undoTimes(session, saver, 1);
+    const full = store.getItem(KEY)!.length;
+    const entry = encodeEntryText(session.history.undo[0]!).length;
+    expect(undoMoves(saver)).toEqual([0, 1]);
+    expect(redoMoves(saver)).toEqual([3]);
+    limit = full - Math.round(1.5 * entry);
+    saver.hidden();
+    expect(undoMoves(saver)).toEqual([1]);
+    expect(redoMoves(saver)).toEqual([]);
+    expect(saver.load()).toMatchObject({ moves: 2 });
+  });
+
+  it("trims history to the character cap", () => {
+    const store = memoryStore(), session = new Session(generateBoard(9, 4).engine);
+    const probe = new GameSaver(memoryStore(), KEY, () => 0);
+    probe.started({ session, ropes: 4, seed: 9, startedAt: 0 });
+    const bare = probe.load()!;
+    const baseLength = encodeGame({ ...bare, start: bare.start, undo: [], redo: [] }).length;
+    const entry = encodeEntryText({ snapshot: bare.snapshot, moves: 0 }).length;
+    const cap = baseLength + Math.round(2.5 * entry);
+    const saver = new GameSaver(store, KEY, () => 0, cap);
+    saver.started({ session, ropes: 4, seed: 9, startedAt: 0 });
+    playMoves(session, saver, 4);
+    expect(store.getItem(KEY)!.length).toBeLessThanOrEqual(cap);
+    expect(undoMoves(saver)).toEqual([2, 3]);
+  });
+
+  it("writes exactly the text encodeGame gives for the saved game", () => {
+    const { store, session, saver } = setup();
+    playMoves(session, saver, 3);
+    undoTimes(session, saver, 1);
+    expect(store.getItem(KEY)).toBe(encodeGame(saver.load()!));
+  });
+
+  it("encodes each history state once and reuses it on later saves", () => {
+    const { session, saver } = setup();
+    playMoves(session, saver, 2);
+    const first = session.history.undo[0]!.snapshot.ropes.find((r) => "pts" in r)!;
+    if (!("pts" in first)) throw new Error("expected a rope");
+    const kept = first.pts[0]!;
+    first.pts[0] = kept + 50;
+    saver.hidden();
+    const back = saver.load()!.undo[0]!.snapshot.ropes.find((r) => "pts" in r)!;
+    expect("pts" in back && back.pts[0]).toBe(Math.round(kept * 100) / 100);
+  });
+
+  it("forgets the text of states that leave the saved window", () => {
+    const { session, saver } = setup();
+    playMoves(session, saver, 12);
+    const oldest = session.history.undo[0]!.snapshot.ropes.find((r) => "pts" in r)!;
+    if (!("pts" in oldest)) throw new Error("expected a rope");
+    oldest.pts[0] = oldest.pts[0]! + 50;
+    undoTimes(session, saver, 2);
+    const back = saver.load()!.undo[0]!;
+    expect(back.moves).toBe(0);
+    const rope = back.snapshot.ropes.find((r) => "pts" in r)!;
+    expect("pts" in rope && rope.pts[0]).toBe(Math.round(oldest.pts[0] * 100) / 100);
+  });
+
+  it("resumes a game with its history and counts", () => {
+    const { session, saver } = setup();
+    playMoves(session, saver, 2);
+    undoTimes(session, saver, 1);
+    const { session: resumed } = restoreGame(saver.load()!, 0);
+    expect(resumed.moves).toBe(1);
+    expect(resumed.undos).toBe(1);
+    expect(resumed.canRedo()).toBe(true);
+    runUntilIdle(resumed);
+    expect(resumed.undo()).toBe(true);
+    expect(resumed.moves).toBe(0);
+    expect(resumed.canStartOver()).toBe(true);
+  });
+
+  it("resumes a save written before undo history with Start Over unavailable", () => {
+    const { store, saver } = setup();
+    const g = saver.load()!;
+    store.setItem(KEY, JSON.stringify({ v: 1, ropes: 4, seed: 9, moves: 0, playedMs: 5, snapshot: encodeSnapshot(g.snapshot) }));
+    const { session: resumed } = restoreGame(saver.load()!, 0);
+    expect(resumed.canStartOver()).toBe(false);
+    expect(resumed.canUndo()).toBe(false);
   });
 });
