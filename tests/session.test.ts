@@ -1,5 +1,8 @@
+import type { Engine } from "../src/engine/engine";
 import { easyBoard } from "../src/game/easy";
 import { GRAB_RADIUS, Session } from "../src/game/session";
+import { History } from "../src/game/history";
+import type { Point } from "../src/util/point";
 
 const still = { now: () => 0 };
 
@@ -111,5 +114,176 @@ describe("session", () => {
   it("does nothing while idle", () => {
     const s = new Session(easyBoard());
     expect(s.step(still, 1e9)).toBe(0);
+  });
+});
+
+function move(s: Session, from: Point, to: Point): void {
+  expect(s.grab(from)).toBe(true);
+  s.drag(to);
+  s.release();
+}
+
+const ends = (s: Session) => s.engine.ropes.map((r) => [...r.ends]);
+
+const STILLNESS: keyof Engine = "drift";
+const pinStill = (s: Session) => Object.defineProperty(s.engine, STILLNESS, { get: () => 0, set: () => undefined });
+
+describe("session undo, redo and start over", () => {
+  it("undoes a move back to the board before it", () => {
+    const s = new Session(easyBoard());
+    move(s, { x: 192, y: 256 }, { x: 128, y: 256 });
+    runUntilIdle(s);
+    expect(s.undo()).toBe(true);
+    expect(s.moves).toBe(0);
+    expect(s.engine.ropes[0]!.ends[1]).toBe(holeAt(s, 192, 256));
+    expect(s.canRedo()).toBe(true);
+    expect(s.undos).toBe(1);
+  });
+
+  it("redoes an undone move", () => {
+    const s = new Session(easyBoard());
+    move(s, { x: 192, y: 256 }, { x: 128, y: 256 });
+    runUntilIdle(s);
+    s.undo();
+    runUntilIdle(s);
+    expect(s.redo()).toBe(true);
+    expect(s.moves).toBe(1);
+    expect(s.engine.ropes[0]!.ends[1]).toBe(holeAt(s, 128, 256));
+    expect(s.redos).toBe(1);
+    expect(s.canRedo()).toBe(false);
+  });
+
+  it("clears redo after a new move", () => {
+    const s = new Session(easyBoard());
+    move(s, { x: 192, y: 256 }, { x: 128, y: 256 });
+    runUntilIdle(s);
+    s.undo();
+    runUntilIdle(s);
+    move(s, { x: 192, y: 256 }, { x: 64, y: 256 });
+    expect(s.canRedo()).toBe(false);
+  });
+
+  it("does nothing while an end is held", () => {
+    const s = new Session(easyBoard());
+    move(s, { x: 192, y: 256 }, { x: 128, y: 256 });
+    runUntilIdle(s);
+    expect(s.grab({ x: 192, y: 0 })).toBe(true);
+    expect(s.undo()).toBe(false);
+    expect(s.redo()).toBe(false);
+    expect(s.startOver()).toBe(false);
+    expect(s.canUndo()).toBe(false);
+    expect(s.canStartOver()).toBe(false);
+    expect(s.moves).toBe(1);
+  });
+
+  it("queues an undo tapped while the dropped end is in flight", () => {
+    const s = new Session(easyBoard());
+    move(s, { x: 192, y: 256 }, { x: 128, y: 256 });
+    expect(s.engine.flying).toHaveLength(1);
+    expect(s.undo()).toBe(true);
+    expect(s.queued).toBe("undo");
+    expect(s.moves).toBe(1);
+    runUntilIdle(s);
+    expect(s.queued).toBeNull();
+    expect(s.moves).toBe(0);
+    expect(s.engine.ropes[0]!.ends[1]).toBe(holeAt(s, 192, 256));
+    expect(s.redo()).toBe(true);
+    expect(s.moves).toBe(1);
+    expect(s.engine.ropes[0]!.ends[1]).toBe(holeAt(s, 128, 256));
+  });
+
+  it("refuses a grab while an undo is queued", () => {
+    const s = new Session(easyBoard());
+    move(s, { x: 192, y: 256 }, { x: 128, y: 256 });
+    s.undo();
+    expect(s.grab({ x: 192, y: 0 })).toBe(false);
+  });
+
+  it("merges a move grabbed before the previous end landed", () => {
+    const s = new Session(easyBoard());
+    move(s, { x: 192, y: 256 }, { x: 128, y: 256 });
+    expect(s.engine.flying).toHaveLength(1);
+    move(s, { x: 192, y: 0 }, { x: 128, y: 0 });
+    runUntilIdle(s);
+    expect(s.moves).toBe(2);
+    expect(s.undo()).toBe(true);
+    expect(s.moves).toBe(0);
+    expect(s.canUndo()).toBe(false);
+  });
+
+  it("ignores undo and redo once solved", () => {
+    const s = new Session(easyBoard());
+    move(s, { x: 192, y: 256 }, { x: 64, y: 0 });
+    runUntilIdle(s);
+    expect(s.won).toBe(true);
+    expect(s.canUndo()).toBe(false);
+    expect(s.undo()).toBe(false);
+    expect(s.redo()).toBe(false);
+    expect(s.moves).toBe(1);
+  });
+
+  it("solves on the frame the winning end lands when the board is already still", () => {
+    const s = new Session(easyBoard());
+    pinStill(s);
+    move(s, { x: 192, y: 256 }, { x: 64, y: 0 });
+    for (let frame = 0; frame < 3000 && !s.engine.endsSeated(); frame++) s.step(still, 1e9);
+    expect(s.engine.endsSeated()).toBe(true);
+    expect(s.won).toBe(true);
+  });
+
+  it("carries out an undo tapped during the winning move instead of the solve", () => {
+    const s = new Session(easyBoard());
+    pinStill(s);
+    move(s, { x: 192, y: 256 }, { x: 64, y: 0 });
+    expect(s.undo()).toBe(true);
+    runUntilIdle(s);
+    expect(s.won).toBe(false);
+    expect(s.moves).toBe(0);
+    expect(s.undos).toBe(1);
+    expect(s.canRedo()).toBe(true);
+  });
+
+  it("starts over from the start state", () => {
+    const s = new Session(easyBoard()), initial = ends(s);
+    move(s, { x: 192, y: 256 }, { x: 128, y: 256 });
+    runUntilIdle(s);
+    move(s, { x: 128, y: 256 }, { x: 64, y: 256 });
+    runUntilIdle(s);
+    expect(s.startOver()).toBe(true);
+    expect(s.moves).toBe(0);
+    expect(s.history.undo).toEqual([]);
+    expect(s.history.redo).toEqual([]);
+    expect(ends(s)).toEqual(initial);
+    expect(s.startOvers).toBe(1);
+    expect(s.replay).toBe(false);
+  });
+
+  it("tries again after a solve", () => {
+    const s = new Session(easyBoard());
+    move(s, { x: 192, y: 256 }, { x: 64, y: 0 });
+    runUntilIdle(s);
+    expect(s.canStartOver()).toBe(true);
+    expect(s.startOver()).toBe(true);
+    expect(s.won).toBe(false);
+    expect(s.replay).toBe(true);
+    expect(s.startOvers).toBe(0);
+    expect(s.engine.active()).toHaveLength(2);
+    expect(s.fades.size).toBe(0);
+  });
+
+  it("cannot start over without a start state", () => {
+    const s = new Session(easyBoard(), new History(null));
+    expect(s.canStartOver()).toBe(false);
+    expect(s.startOver()).toBe(false);
+  });
+
+  it("refuses a second undo when only one entry remains", () => {
+    const s = new Session(easyBoard());
+    move(s, { x: 192, y: 256 }, { x: 128, y: 256 });
+    runUntilIdle(s);
+    expect(s.undo()).toBe(true);
+    expect(s.undo()).toBe(false);
+    expect(s.moves).toBe(0);
+    expect(s.undos).toBe(1);
   });
 });
