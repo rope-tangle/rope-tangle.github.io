@@ -1,6 +1,8 @@
 import { PEG_R } from "../engine/constants";
 import type { Engine } from "../engine/engine";
+import { fromSnapshot, toSnapshot, type EngineSnapshot } from "../engine/snapshot";
 import type { Point } from "../util/point";
+import { History, type HistoryEntry } from "./history";
 
 export type Phase = "idle" | "held" | "busy";
 
@@ -17,22 +19,30 @@ const CLEAR_STREAK = 4;
 const FADE_STEP = 0.05;
 
 export class Session {
-  readonly engine: Engine;
+  engine: Engine;
+  readonly history: History;
   phase: Phase = "idle";
   moves = 0;
   revision = 0;
   pointer: Point | null = null;
   won = false;
+  undos = 0;
+  redos = 0;
+  startOvers = 0;
+  replay = false;
+  queued: "undo" | "redo" | null = null;
   readonly fades = new Map<number, number>();
   private heldFrom: number | null = null;
+  private before: HistoryEntry | null = null;
   private settleFrames = 0;
 
-  constructor(engine: Engine) {
+  constructor(engine: Engine, history: History = new History(toSnapshot(engine))) {
     this.engine = engine;
+    this.history = history;
   }
 
   grab(p: Point): boolean {
-    if (this.phase === "held" || this.won) return false;
+    if (this.phase === "held" || this.won || this.queued !== null) return false;
     const E = this.engine, busy = E.busyRopes();
     let best: { rope: number; end: 0 | 1; hole: number } | null = null;
     let bd = GRAB_RADIUS * GRAB_RADIUS;
@@ -49,6 +59,7 @@ export class Session {
       }
     }
     if (!best) return false;
+    this.before = E.endsSeated() ? this.entry() : null;
     E.grab(best.rope, best.end);
     this.heldFrom = best.hole;
     this.pointer = this.clamp(p);
@@ -71,7 +82,11 @@ export class Session {
     if (hole === null) return;
     const P = this.engine.hole(hole);
     this.engine.release([{ x: p.x, y: p.y }, { x: P.x, y: P.y }], hole);
-    if (hole !== this.heldFrom) this.moves++;
+    if (hole !== this.heldFrom) {
+      this.moves++;
+      this.history.recordMove(this.before);
+    }
+    this.before = null;
     this.revision++;
     this.heldFrom = null;
     this.pointer = null;
@@ -117,6 +132,12 @@ export class Session {
       E.substep(null);
       used++;
     }
+    if (this.queued !== null && E.endsSeated()) {
+      const action = this.queued;
+      this.queued = null;
+      this.apply(action);
+      return used;
+    }
     this.settleFrames++;
     if (!E.busy()) {
       const settled = E.drift < SETTLE_DRIFT || this.settleFrames > SETTLE_FRAMES;
@@ -134,6 +155,70 @@ export class Session {
       }
     }
     return used;
+  }
+
+  canUndo(): boolean {
+    return !this.won && this.phase !== "held" && this.history.canUndo();
+  }
+
+  canRedo(): boolean {
+    return !this.won && this.phase !== "held" && this.history.canRedo();
+  }
+
+  canStartOver(): boolean {
+    return this.history.start !== null && this.phase !== "held";
+  }
+
+  undo(): boolean {
+    return this.request("undo");
+  }
+
+  redo(): boolean {
+    return this.request("redo");
+  }
+
+  startOver(): boolean {
+    const start = this.history.start;
+    if (start === null || this.phase === "held") return false;
+    this.history.clear();
+    this.queued = null;
+    if (this.won) {
+      this.won = false;
+      this.replay = true;
+    } else {
+      this.startOvers++;
+    }
+    this.jump(start, 0);
+    return true;
+  }
+
+  private request(action: "undo" | "redo"): boolean {
+    if (this.queued !== null) return false;
+    if (!(action === "undo" ? this.canUndo() : this.canRedo())) return false;
+    if (this.engine.endsSeated()) this.apply(action);
+    else this.queued = action;
+    return true;
+  }
+
+  private apply(action: "undo" | "redo"): void {
+    const current = this.entry();
+    const e = action === "undo" ? this.history.stepBack(current) : this.history.stepForward(current);
+    if (!e) return;
+    if (action === "undo") this.undos++;
+    else this.redos++;
+    this.jump(e.snapshot, e.moves);
+  }
+
+  private jump(snapshot: EngineSnapshot, moves: number): void {
+    this.engine = fromSnapshot(snapshot);
+    this.moves = moves;
+    this.fades.clear();
+    this.revision++;
+    this.settle();
+  }
+
+  private entry(): HistoryEntry {
+    return { snapshot: toSnapshot(this.engine), moves: this.moves };
   }
 
   settle(): void {
