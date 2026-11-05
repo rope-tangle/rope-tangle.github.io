@@ -1,0 +1,57 @@
+name: Dependabot auto-merge
+
+# Approves every Dependabot PR and arms auto-merge without gating of its own.
+# The "Protect main" ruleset's required checks (`test`, `check-commits`) are
+# the only thing holding back a red PR: rename a job and the ruleset must follow.
+
+on:
+  pull_request:
+    branches: [main]
+    # `synchronize` re-approves after a Dependabot rebase dismisses the stale approval.
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependabot-auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.pull_request.user.login == 'dependabot[bot]' }}
+    permissions:
+      # `gh pr merge --auto` needs contents: write even though GitHub does the merge.
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        continue-on-error: true
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+
+      - name: Record what is auto-merging
+        env:
+          NAMES: ${{ steps.metadata.outputs.dependency-names }}
+          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
+        run: echo "Auto-merging **${NAMES:-(metadata unavailable)}** — ${UPDATE_TYPE:-unknown}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Approve the PR
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr review --approve "$PR_URL"
+
+      - name: Enable auto-merge
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr merge --auto --rebase "$PR_URL"
+
+      - name: Confirm auto-merge armed
+        run: echo "✅ Approved and auto-merge armed — GitHub will merge once the required checks pass." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record failure in summary
+        if: failure()
+        run: echo "❌ Auto-merge was NOT armed — a step above failed; this PR will not merge unattended. See the job log." >> "$GITHUB_STEP_SUMMARY"
