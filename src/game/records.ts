@@ -150,8 +150,23 @@ export function readRecord<T>(
   return value;
 }
 
-export function writeRecord(store: KeyValueStore, key: string, value: unknown): boolean {
-  return writeText(store, key, JSON.stringify(value));
+export type StoredData = "game" | "stock" | "bundled" | "settings";
+
+export interface WriteFailure {
+  what: StoredData;
+  key: string;
+  chars: number;
+  historyDropped?: number;
+  saved?: boolean;
+}
+
+export type OnWriteFailed = (f: WriteFailure) => void;
+
+export function writeRecord(store: KeyValueStore, key: string, value: unknown, what: StoredData, onWriteFailed: OnWriteFailed): boolean {
+  const text = JSON.stringify(value);
+  const ok = writeText(store, key, text);
+  if (!ok) onWriteFailed({ what, key, chars: text.length });
+  return ok;
 }
 
 export function writeText(store: KeyValueStore, key: string, text: string): boolean {

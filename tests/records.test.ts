@@ -7,7 +7,7 @@ import { generateBoard } from "../src/generate/generate";
 import { GENERATOR_VERSION } from "../src/generate/version";
 import {
   decodeGame, decodeReady, decodeSnapshot, encodeGame, encodeReady, encodeSnapshot, HISTORY_DECIMALS, readRecord, removeRecord, storageKeys, writeRecord,
-  type GameJson, type ReadyBoard, type ReadyJson, type RopeJson, type SavedGame, type SnapshotJson,
+  type GameJson, type ReadyBoard, type ReadyJson, type RopeJson, type SavedGame, type SnapshotJson, type WriteFailure,
 } from "../src/game/records";
 import { memoryStore, type KeyValueStore } from "../src/game/settings";
 
@@ -144,7 +144,9 @@ describe("record storage", () => {
 
   it("reads back what it wrote", () => {
     const store = memoryStore(), b = board4();
-    expect(writeRecord(store, "k", encodeReady(b))).toBe(true);
+    const failures: WriteFailure[] = [];
+    expect(writeRecord(store, "k", encodeReady(b), "stock", (f) => failures.push(f))).toBe(true);
+    expect(failures).toEqual([]);
     expect(readRecord(store, "k", (v) => decodeReady(v, 4))).toEqual(b);
   });
 
@@ -160,7 +162,9 @@ describe("record storage", () => {
         throw new Error("blocked");
       },
     };
-    expect(writeRecord(refusing, "k", encodeReady(board4()))).toBe(false);
+    const failures: WriteFailure[] = [];
+    expect(writeRecord(refusing, "k", encodeReady(board4()), "stock", (f) => failures.push(f))).toBe(false);
+    expect(failures).toEqual([{ what: "stock", key: "k", chars: JSON.stringify(encodeReady(board4())).length }]);
     expect(readRecord(refusing, "k", (v) => decodeReady(v, 4))).toBeNull();
     expect(() => removeRecord(refusing, "k")).not.toThrow();
   });

@@ -1,7 +1,7 @@
 import type { RopeSnapshot } from "../src/engine/snapshot";
 import { easyBoard } from "../src/game/easy";
 import { generateBoard } from "../src/generate/generate";
-import { decodeGame, encodeEntryText, encodeGame, encodeSnapshot, GAME_VERSION, storageKeys } from "../src/game/records";
+import { decodeGame, encodeEntryText, encodeGame, encodeSnapshot, GAME_VERSION, storageKeys, type WriteFailure } from "../src/game/records";
 import { GameSaver, restoreGame } from "../src/game/saver";
 import { Session } from "../src/game/session";
 import { memoryStore, type KeyValueStore } from "../src/game/settings";
@@ -315,6 +315,30 @@ describe("game saver history", () => {
     expect(saver.load()).toMatchObject({ moves: 2 });
   });
 
+  it("reports a failed write with the history it dropped and whether the game was saved", () => {
+    let limit = Infinity;
+    const inner = memoryStore();
+    const store: KeyValueStore = { ...inner, setItem: (k, v) => {
+      if (v.length > limit) throw new Error("quota");
+      inner.setItem(k, v);
+    } };
+    const failures: WriteFailure[] = [];
+    const session = new Session(generateBoard(9, 4).engine);
+    const saver = new GameSaver(store, KEY, () => 0, { onWriteFailed: (f) => failures.push(f) });
+    saver.started({ session, ropes: 4, seed: 9, startedAt: 0 });
+    playMoves(session, saver, 3);
+    undoTimes(session, saver, 1);
+    expect(failures).toEqual([]);
+    const full = store.getItem(KEY)!.length;
+    const entry = encodeEntryText(session.history.undo[0]!).length;
+    limit = full - Math.round(1.5 * entry);
+    saver.hidden();
+    expect(failures).toEqual([{ what: "game", key: KEY, chars: full, historyDropped: 2, saved: true }]);
+    limit = 0;
+    saver.hidden();
+    expect(failures[1]).toEqual({ what: "game", key: KEY, chars: expect.any(Number), historyDropped: 3, saved: false });
+  });
+
   it("trims history to the character cap", () => {
     const store = memoryStore(), session = new Session(generateBoard(9, 4).engine);
     const probe = new GameSaver(memoryStore(), KEY, () => 0);
@@ -323,7 +347,7 @@ describe("game saver history", () => {
     const baseLength = encodeGame({ ...bare, start: bare.start, undo: [], redo: [] }).length;
     const entry = encodeEntryText({ snapshot: bare.snapshot, moves: 0 }).length;
     const cap = baseLength + Math.round(2.5 * entry);
-    const saver = new GameSaver(store, KEY, () => 0, cap);
+    const saver = new GameSaver(store, KEY, () => 0, { charCap: cap });
     saver.started({ session, ropes: 4, seed: 9, startedAt: 0 });
     playMoves(session, saver, 4);
     expect(store.getItem(KEY)!.length).toBeLessThanOrEqual(cap);

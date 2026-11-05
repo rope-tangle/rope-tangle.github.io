@@ -1,7 +1,7 @@
 import { toSnapshot } from "../src/engine/snapshot";
 import { easyBoard } from "../src/game/easy";
 import { generateBoard } from "../src/generate/generate";
-import { encodeSnapshot, storageKeys, type ReadyBoard } from "../src/game/records";
+import { encodeReady, encodeSnapshot, storageKeys, type ReadyBoard, type WriteFailure } from "../src/game/records";
 import { memoryStore, type KeyValueStore } from "../src/game/settings";
 import { Stock } from "../src/game/stock";
 
@@ -63,5 +63,20 @@ describe("stock", () => {
     const s = new Stock(refusing, keys);
     s.put(ready(4));
     expect(s.take(4)).toMatchObject({ ropes: 4 });
+  });
+
+  it("reports the ready boards and bundled markers storage refuses", () => {
+    const inner = memoryStore(), failures: WriteFailure[] = [];
+    const refusing: KeyValueStore = { ...inner, setItem: () => {
+      throw new Error("quota");
+    } };
+    const s = new Stock(refusing, keys, (f) => failures.push(f));
+    const b = { ...ready(4), bundled: true };
+    s.put(b);
+    s.take(4);
+    expect(failures).toEqual([
+      { what: "stock", key: keys.ready(4), chars: JSON.stringify(encodeReady(b)).length },
+      { what: "bundled", key: keys.bundled(4), chars: 4 },
+    ]);
   });
 });
