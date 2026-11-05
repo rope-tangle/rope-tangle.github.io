@@ -1,3 +1,4 @@
+import type { WriteFailure } from "../src/game/records";
 import { DEFAULT_SETTINGS, loadSettings, memoryStore, saveSettings, SETTINGS_KEY, type KeyValueStore } from "../src/game/settings";
 
 const broken: KeyValueStore = {
@@ -37,5 +38,11 @@ describe("settings", () => {
   it("survives a store that throws", () => {
     expect(loadSettings(broken)).toEqual(DEFAULT_SETTINGS);
     expect(() => saveSettings(broken, { ropes: 4, showMoves: true })).not.toThrow();
+  });
+
+  it("reports settings storage refuses", () => {
+    const failures: WriteFailure[] = [];
+    saveSettings(broken, { ropes: 8, showMoves: false }, (f) => failures.push(f));
+    expect(failures).toEqual([{ what: "settings", key: SETTINGS_KEY, chars: "{\"ropes\":8,\"showMoves\":false}".length }]);
   });
 });

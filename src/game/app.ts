@@ -1,4 +1,5 @@
 import { sanitizeReason } from "../analytics/errors";
+import { otherChars, writeFailureReporter } from "../analytics/storage";
 import { track, type GameTrigger, type ReplacedGameData } from "../analytics/umami";
 import { ROPE_COUNTS } from "../board";
 import { drawScene } from "../render/scene";
@@ -105,9 +106,10 @@ export function startApp(doc: Document, win: Window): App {
   const visitRopes = Number(params.get("ropes"));
   if (testMode && ROPE_COUNTS.includes(visitRopes)) settings.ropes = visitRopes;
 
+  const writeFailed = writeFailureReporter((data) => track("storage-write-failed", data), (key) => otherChars(win.localStorage, key));
   const dumps: string[] = [];
   const keys = storageKeys(import.meta.env.BASE_URL);
-  const stock = new Stock(store, keys);
+  const stock = new Stock(store, keys, writeFailed);
   const bundledLoads = fillFromBundled(stock, bundledLoader, settings.ropes);
   const source = new BoardSource({
     stock,
@@ -120,7 +122,7 @@ export function startApp(doc: Document, win: Window): App {
     },
   });
   const played = activeClock(() => win.performance.now(), () => doc.hidden);
-  const saver = new GameSaver(store, keys.game, () => played.now());
+  const saver = new GameSaver(store, keys.game, () => played.now(), { onWriteFailed: writeFailed });
   const reload = new ReloadPreparer(() => session, () => saver.hidden());
   doc.addEventListener("visibilitychange", () => {
     if (doc.hidden) saver.hidden();
@@ -280,7 +282,7 @@ export function startApp(doc: Document, win: Window): App {
   ropesSelect.value = String(settings.ropes);
   ropesSelect.addEventListener("change", () => {
     settings.ropes = Number(ropesSelect.value);
-    saveSettings(store, settings);
+    saveSettings(store, settings, writeFailed);
     load("rope-count");
   });
   newButton.addEventListener("click", () => load("new"));
@@ -320,7 +322,7 @@ export function startApp(doc: Document, win: Window): App {
   showMoves.checked = settings.showMoves;
   showMoves.addEventListener("change", () => {
     settings.showMoves = showMoves.checked;
-    saveSettings(store, settings);
+    saveSettings(store, settings, writeFailed);
     updateMoves();
   });
   settingsButton.addEventListener("click", () => {
@@ -432,7 +434,7 @@ export function startApp(doc: Document, win: Window): App {
     colors = shuffledColors(saved.seed);
     settings.ropes = saved.ropes;
     ropesSelect.value = String(saved.ropes);
-    saveSettings(store, settings);
+    saveSettings(store, settings, writeFailed);
     saver.resumed({ session: resumed, ropes: saved.ropes, seed: saved.seed, startedAt });
     layout();
     overlay.hidden = true;

@@ -1,7 +1,7 @@
 import { fromSnapshot, toSnapshot } from "../engine/snapshot";
 import { History } from "./history";
 import {
-  decodeGame, encodeEntryText, encodeGameBase, encodeStartText, GAME_VERSION, gameText, readRecord, removeRecord, writeText, type DiscardReason, type SavedGame,
+  decodeGame, encodeEntryText, encodeGameBase, encodeStartText, GAME_VERSION, gameText, readRecord, removeRecord, writeText, type DiscardReason, type OnWriteFailed, type SavedGame,
 } from "./records";
 import { Session } from "./session";
 import type { KeyValueStore } from "./settings";
@@ -26,12 +26,14 @@ export class GameSaver {
   private readonly key: string;
   private readonly now: () => number;
   private readonly charCap: number;
+  private readonly onWriteFailed: OnWriteFailed;
 
-  constructor(store: KeyValueStore, key: string, now: () => number, charCap = GAME_CHAR_CAP) {
+  constructor(store: KeyValueStore, key: string, now: () => number, options: { charCap?: number; onWriteFailed?: OnWriteFailed } = {}) {
     this.store = store;
     this.key = key;
     this.now = now;
-    this.charCap = charCap;
+    this.charCap = options.charCap ?? GAME_CHAR_CAP;
+    this.onWriteFailed = options.onWriteFailed ?? (() => undefined);
   }
 
   load(onDiscard?: (reason: DiscardReason) => void): SavedGame | null {
@@ -106,7 +108,15 @@ export class GameSaver {
     const drop = () => (redo.length > 0 ? redo.shift() : undo.shift()) !== undefined;
     let text = gameText(base, startText, undo, redo);
     while (text.length > this.charCap && drop()) text = gameText(base, startText, undo, redo);
-    while (!writeText(this.store, this.key, text) && drop()) text = gameText(base, startText, undo, redo);
+    if (writeText(this.store, this.key, text)) return;
+    const chars = text.length;
+    let historyDropped = 0, saved = false;
+    while (!saved && drop()) {
+      historyDropped++;
+      text = gameText(base, startText, undo, redo);
+      saved = writeText(this.store, this.key, text);
+    }
+    this.onWriteFailed({ what: "game", key: this.key, chars, historyDropped, saved });
   }
 }
 

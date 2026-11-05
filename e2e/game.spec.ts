@@ -608,6 +608,22 @@ test.describe("analytics", () => {
     await captureEvents(page);
   });
 
+  test("reports a game storage refuses once per page load", async ({ page }) => {
+    await page.addInitScript(() => {
+      const proto = Storage.prototype, setItem = Reflect.get(proto, "setItem");
+      Reflect.set(proto, "setItem", function (this: Storage, k: string, v: string) {
+        if (k === "rope-tangle/game") throw new DOMException("full", "QuotaExceededError");
+        setItem.call(this, k, v);
+      });
+    });
+    await page.goto("?test=1&ropes=4");
+    await loaded(page);
+    await moveOneEnd(page);
+    expect(await named(page, "storage-write-failed")).toEqual([
+      { what: "game", chars: expect.any(Number), historyDropped: 0, saved: false, otherChars: expect.any(Number) },
+    ]);
+  });
+
   test("reports undos, start overs and replays", async ({ page }) => {
     await page.goto("?test=1&board=easy");
     await loaded(page);

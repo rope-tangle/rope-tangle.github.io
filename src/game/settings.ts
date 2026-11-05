@@ -1,4 +1,5 @@
 import { ROPE_COUNTS } from "../board";
+import { writeRecord, type OnWriteFailed } from "./records";
 
 export interface Settings {
   ropes: number;
@@ -44,10 +45,6 @@ export function loadSettings(store: KeyValueStore): Settings {
   return { ropes, showMoves };
 }
 
-export function saveSettings(store: KeyValueStore, s: Settings): void {
-  try {
-    store.setItem(SETTINGS_KEY, JSON.stringify({ ropes: s.ropes, showMoves: s.showMoves }));
-  } catch {
-    return;
-  }
+export function saveSettings(store: KeyValueStore, s: Settings, onWriteFailed: OnWriteFailed = () => undefined): void {
+  writeRecord(store, SETTINGS_KEY, { ropes: s.ropes, showMoves: s.showMoves }, "settings", onWriteFailed);
 }

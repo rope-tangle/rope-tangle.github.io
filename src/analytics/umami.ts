@@ -1,5 +1,5 @@
 import type { BoardFailure } from "../game/board-source";
-import type { DiscardReason } from "../game/records";
+import type { DiscardReason, WriteFailure } from "../game/records";
 import type { UnhandledErrorData } from "./errors";
 
 declare global {
@@ -47,6 +47,7 @@ export type Events = {
   "game-restarted": { ropes: number; moves: number; ropesLeft: number; via: "start-over" | "try-again" };
   "game-resumed": { ropes: number; moves: number; ropesLeft: number; elapsedMs: number };
   "saved-game-discarded": { reason: DiscardReason };
+  "storage-write-failed": Omit<WriteFailure, "key"> & { otherChars?: number };
   "back-guard-caught": Record<string, never>;
   "unhandled-error": UnhandledErrorData;
   "pwa-update-detected": Record<string, never>;
