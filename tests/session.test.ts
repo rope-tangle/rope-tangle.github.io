@@ -126,7 +126,7 @@ function move(s: Session, from: Point, to: Point): void {
 const ends = (s: Session) => s.engine.ropes.map((r) => [...r.ends]);
 
 const STILLNESS: keyof Engine = "drift";
-const pinStill = (s: Session) => Object.defineProperty(s.engine, STILLNESS, { get: () => 0, set: () => undefined });
+const pinStill = (s: Session) => Object.defineProperty(s.engine, STILLNESS, { get: () => 0, set: () => {} });
 
 describe("session undo, redo and start over", () => {
   it("undoes a move back to the board before it", () => {
