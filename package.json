@@ -17,7 +17,7 @@
     "e2e": "playwright test"
   },
   "devDependencies": {
-    "@playwright/test": "^1.64.0",
+    "@playwright/test": "^1.64.1",
     "oxlint": "^1.85.0",
     "oxlint-tsgolint": "~7.0.2003",
     "typescript": "~7.0.2",
