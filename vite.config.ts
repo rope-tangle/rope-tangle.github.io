@@ -37,6 +37,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
+    setupFiles: ["tests/helpers/vitest-setup.ts"],
     exclude: [
       "**/node_modules/**", "**/dist/**", "**/spike/**", "**/.worktrees/**", "**/.claude/**", "**/e2e/**",
       ...(process.env.MEASURE ? [] : ["**/*.measure.test.ts"]),
