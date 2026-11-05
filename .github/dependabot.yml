@@ -1,0 +1,44 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: daily
+    open-pull-requests-limit: 10
+    # Let releases soak so a malicious version is likely pulled before we see it; security updates bypass this.
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    groups:
+      vite:
+        patterns:
+          - "vite"
+          - "vite-plugin-pwa"
+          - "@vitejs/*"
+      vitest:
+        patterns:
+          - "vitest"
+          - "@vitest/*"
+      # oxlint-tsgolint embeds its own TypeScript release; batch it with `typescript` when both move.
+      typescript:
+        patterns:
+          - "typescript"
+          - "oxlint"
+          - "oxlint-tsgolint"
+          - "@oxlint/*"
+          - "@oxlint-tsgolint/*"
+      workbox:
+        patterns:
+          - "workbox-*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: daily
+    open-pull-requests-limit: 10
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns:
+          - "actions/*"
